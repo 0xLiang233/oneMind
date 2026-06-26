@@ -1,16 +1,17 @@
 # Dependencies
 node_modules/
-apps/*/node_modules/
+desktop/*/node_modules/
 
 # Build output
 dist/
 dist-electron/
 release/
 target/
-apps/*/dist/
-apps/desktop/dist-electron/
-apps/desktop/release/
-apps/tauri-probe/src-tauri/target/
+desktop/*/dist/
+desktop/electron/dist-electron/
+desktop/electron/release/
+desktop/tauri/src-tauri/gen/
+desktop/tauri/src-tauri/target/
 
 # Logs and local environment
 *.log

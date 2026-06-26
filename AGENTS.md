@@ -2,18 +2,18 @@
 
 ## Project Structure & Module Organization
 
-This is a pnpm workspace. The main product lives in `apps/desktop`, an Electron + React + Vite desktop app. Renderer code is in `apps/desktop/src`, Electron main/preload code is in `apps/desktop/electron`, static assets are in `apps/desktop/public`, and built output goes to `apps/desktop/dist` and `apps/desktop/dist-electron`.
+This is a pnpm workspace. The current Electron desktop shell lives in `desktop/electron`, an Electron + React + Vite desktop app. Renderer code is currently in `desktop/electron/src`, Electron main/preload code is in `desktop/electron/electron`, static assets are in `desktop/electron/public`, and built output goes to `desktop/electron/dist` and `desktop/electron/dist-electron`.
 
-`apps/tauri-probe` is a separate Tauri experiment/probe app. Shared workspace packages are under `packages/application`, `packages/domain`, `packages/shared`, and `packages/storage`. Product references and prototypes are in `docs`, including `docs/产品原型/main-workspace.html`.
+`desktop/tauri` is the Tauri experiment/probe app and may become the primary desktop shell after validation. Shared workspace packages are under `packages/application`, `packages/domain`, `packages/shared`, and `packages/storage`. Product references and archived notes are in `docs`.
 
 ## Build, Test, and Development Commands
 
 - `pnpm install`: install workspace dependencies.
-- `pnpm dev:desktop`: run the Electron desktop app with Vite and Electron together.
-- `pnpm build:desktop`: build the desktop renderer, Electron main process, and preload scripts.
-- `pnpm --dir apps/desktop lint`: run ESLint for the desktop app.
-- `pnpm --dir apps/desktop preview`: preview the Vite production build.
-- `pnpm --dir apps/tauri-probe tauri dev`: run the Tauri probe when working on that app.
+- `pnpm dev:electron` or `pnpm dev:desktop`: run the Electron desktop app with Vite and Electron together.
+- `pnpm build:electron` or `pnpm build:desktop`: build the Electron renderer, main process, and preload scripts.
+- `pnpm --dir desktop/electron lint`: run ESLint for the Electron app.
+- `pnpm --dir desktop/electron preview`: preview the Vite production build.
+- `pnpm dev:tauri`: run the Tauri probe when working on that shell.
 
 ## Coding Style & Naming Conventions
 
@@ -23,7 +23,7 @@ Prefer existing helpers and IPC patterns in `electron/main.ts` and `electron/pre
 
 ## Testing Guidelines
 
-There is no dedicated test suite configured yet. For now, verify changes with `pnpm build:desktop` and, when practical, `pnpm --dir apps/desktop lint`. For UI changes, run `pnpm dev:desktop` and check the actual Electron window, especially native `WebContentsView` behavior that browser-only previews cannot cover.
+There is no dedicated test suite configured yet. For now, verify changes with `pnpm build:desktop` and, when practical, `pnpm --dir desktop/electron lint`. For UI changes, run `pnpm dev:desktop` and check the actual Electron window, especially native `WebContentsView` behavior that browser-only previews cannot cover.
 
 ## Agent-Specific Instructions
 

@@ -47,11 +47,11 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 下一步已经补上了一个最小探针应用：
 
-- 目录：`apps/tauri-probe`
-- 开发运行：`apps/tauri-probe/tools/run-probe.cmd`
-- 调试构建：`apps/tauri-probe/tools/build-probe.cmd`
+- 目录：`desktop/tauri`
+- 开发运行：`desktop/tauri/tools/run-probe.cmd`
+- 调试构建：`desktop/tauri/tools/build-probe.cmd`
 
 构建产物默认输出到：
 
-- `apps/tauri-probe/src-tauri/target/debug/bundle/nsis/`
-- `apps/tauri-probe/src-tauri/target/debug/bundle/msi/`
+- `desktop/tauri/src-tauri/target/debug/bundle/nsis/`
+- `desktop/tauri/src-tauri/target/debug/bundle/msi/`

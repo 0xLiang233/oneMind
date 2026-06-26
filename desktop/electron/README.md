@@ -20,7 +20,7 @@ From repo root:
 
 ```powershell
 pnpm install
-pnpm dev:desktop
+pnpm dev:electron
 ```
 
 Or inside this app:
@@ -33,7 +33,7 @@ pnpm dev
 ## Build
 
 ```powershell
-pnpm build:desktop
+pnpm build:electron
 ```
 
 ## Notes
