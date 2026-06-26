@@ -5,7 +5,7 @@ import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const isDev = !app.isPackaged
+const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
 
 type WorkspaceMeta = {
   workspacePath: string
@@ -601,7 +601,10 @@ function getRendererUrl(route = '') {
   if (isDev) {
     return `http://127.0.0.1:5173${route}`
   }
-  return path.join(__dirname, '../dist/index.html')
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'renderer/index.html')
+  }
+  return path.join(__dirname, '../../renderer/dist/index.html')
 }
 
 async function loadRendererWindow(window: BrowserWindow, route = '') {

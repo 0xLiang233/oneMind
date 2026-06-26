@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+renderer/node_modules/
 desktop/*/node_modules/
 
 # Build output
@@ -7,6 +8,7 @@ dist/
 dist-electron/
 release/
 target/
+renderer/dist/
 desktop/*/dist/
 desktop/electron/dist-electron/
 desktop/electron/release/

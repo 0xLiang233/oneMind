@@ -7,7 +7,8 @@
     "dev:desktop": "pnpm dev:electron",
     "build:desktop": "pnpm build:electron",
     "dev:electron": "pnpm --dir desktop/electron dev",
-    "build:electron": "pnpm --dir desktop/electron build",
+    "build:renderer": "pnpm --dir renderer build",
+    "build:electron": "pnpm build:renderer && pnpm --dir desktop/electron build",
     "package:electron": "pnpm --dir desktop/electron package",
     "package:electron:portable": "pnpm --dir desktop/electron package:portable",
     "dev:tauri": "pnpm --dir desktop/tauri tauri dev"

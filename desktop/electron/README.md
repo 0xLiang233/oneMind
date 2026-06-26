@@ -1,11 +1,13 @@
 # OneMind Desktop
 
-Minimum usable Electron + React skeleton for OneMind.
+Electron desktop shell for OneMind. The shared React/Vite renderer lives in `../../renderer`.
 
 ## Current scope
 
 - Electron desktop shell
-- React route-driven workbench
+- Electron main/preload process
+- Native window and IPC integration
+- Packaged loading of `renderer/dist`
 - Workspace / vault folder selection
 - Local workspace initialization:
   - `notes/`

@@ -16,15 +16,58 @@ importers:
       '@electron-toolkit/utils':
         specifier: ^4.0.0
         version: 4.0.0(electron@42.4.1)
-      '@milkdown/crepe':
-        specifier: ^7.21.2
-        version: 7.21.2(typescript@6.0.3)
       concurrently:
         specifier: ^10.0.3
         version: 10.0.3
       cross-env:
         specifier: ^10.1.0
         version: 10.1.0
+      wait-on:
+        specifier: ^9.0.10
+        version: 9.0.10
+    devDependencies:
+      '@types/node':
+        specifier: ^24.12.3
+        version: 24.13.2
+      electron:
+        specifier: ^42.4.1
+        version: 42.4.1
+      electron-builder:
+        specifier: ^26.15.3
+        version: 26.15.3(electron-builder-squirrel-windows@26.15.3)
+      eslint:
+        specifier: ^10.3.0
+        version: 10.5.0
+      typescript:
+        specifier: ~6.0.2
+        version: 6.0.3
+      typescript-eslint:
+        specifier: ^8.59.2
+        version: 8.61.1(eslint@10.5.0)(typescript@6.0.3)
+
+  desktop/tauri:
+    dependencies:
+      '@tauri-apps/api':
+        specifier: ^2
+        version: 2.11.1
+    devDependencies:
+      '@tauri-apps/cli':
+        specifier: ^2
+        version: 2.11.3
+
+  packages/application: {}
+
+  packages/domain: {}
+
+  packages/shared: {}
+
+  packages/storage: {}
+
+  renderer:
+    dependencies:
+      '@milkdown/crepe':
+        specifier: ^7.21.2
+        version: 7.21.2(typescript@6.0.3)
       react:
         specifier: ^19.2.6
         version: 19.2.7
@@ -34,9 +77,6 @@ importers:
       react-router-dom:
         specifier: ^7.18.0
         version: 7.18.0(react-dom@19.2.7)(react@19.2.7)
-      wait-on:
-        specifier: ^9.0.10
-        version: 9.0.10
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
@@ -53,12 +93,6 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.0.1
         version: 6.0.2(vite@8.0.16)
-      electron:
-        specifier: ^42.4.1
-        version: 42.4.1
-      electron-builder:
-        specifier: ^26.15.3
-        version: 26.15.3(electron-builder-squirrel-windows@26.15.3)
       eslint:
         specifier: ^10.3.0
         version: 10.5.0
@@ -80,24 +114,6 @@ importers:
       vite:
         specifier: ^8.0.12
         version: 8.0.16(@types/node@24.13.2)
-
-  desktop/tauri:
-    dependencies:
-      '@tauri-apps/api':
-        specifier: ^2
-        version: 2.11.1
-    devDependencies:
-      '@tauri-apps/cli':
-        specifier: ^2
-        version: 2.11.3
-
-  packages/application: {}
-
-  packages/domain: {}
-
-  packages/shared: {}
-
-  packages/storage: {}
 
 packages:
 
