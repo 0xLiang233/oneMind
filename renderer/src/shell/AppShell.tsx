@@ -150,21 +150,26 @@ export function AppShell() {
 
   // Bridge init + auto-init default workspace
   useEffect(() => {
-    const bridge = window.oneMind
-    if (!bridge?.workspace || bridge.runtime?.bridgeReady === false) {
-      setBridgeReady(false)
-      setBridgeError("当前桌面外壳尚未接入 OneMind 原生能力。")
-      return
-    }
-    setBridgeReady(true)
-    setBridgeError("")
-    bridge.workspace.getDefaultPath().then(async (defaultPath: string) => {
+    let cancelled = false
+
+    async function initBridge() {
+      const bridge = window.oneMind
+      if (!bridge?.workspace || bridge.runtime?.bridgeReady === false) {
+        setBridgeReady(false)
+        setBridgeError("当前桌面外壳尚未接入 OneMind 原生能力。")
+        return
+      }
+      setBridgeReady(true)
+      setBridgeError("")
+      const defaultPath = await bridge.workspace.getDefaultPath()
+      if (cancelled) return
       setDefaultPath(defaultPath)
-      // Auto-init default workspace on startup (no user prompt needed)
       try {
         const ws = await bridge.workspace.initDefault()
+        if (cancelled) return
         setWorkspace(ws)
         const preferences = await bridge.preferences.read(ws.workspacePath)
+        if (cancelled) return
         applyPreferences(preferences)
         if (initialPathRef.current === "/" || initialPathRef.current === "/home") {
           if (preferences.startupPage === "notes") {
@@ -176,7 +181,14 @@ export function AppShell() {
       } catch (err) {
         console.warn("Auto-init workspace failed, user can create manually:", err)
       }
-    })
+    }
+
+    void initBridge()
+    window.addEventListener("oneMindBridgeReady", initBridge)
+    return () => {
+      cancelled = true
+      window.removeEventListener("oneMindBridgeReady", initBridge)
+    }
   }, [navigate])
 
   // Sidebar collapsed state — no-flash init

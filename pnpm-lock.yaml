@@ -68,6 +68,9 @@ importers:
       '@milkdown/crepe':
         specifier: ^7.21.2
         version: 7.21.2(typescript@6.0.3)
+      '@tauri-apps/api':
+        specifier: ^2
+        version: 2.11.1
       react:
         specifier: ^19.2.6
         version: 19.2.7

@@ -18,6 +18,15 @@ export function installOneMindBridgeFallback() {
 
   const isTauri = "__TAURI_INTERNALS__" in window || "__TAURI__" in window
 
+  if (isTauri) {
+    import("./tauriBridge").then(({ createTauriBridge }) => {
+      window.oneMind = createTauriBridge()
+      window.dispatchEvent(new CustomEvent("oneMindBridgeReady"))
+    }).catch((error: unknown) => {
+      console.error("Failed to install Tauri bridge:", error)
+    })
+  }
+
   window.oneMind = {
     runtime: {
       platform: isTauri ? "tauri" : "unsupported",
