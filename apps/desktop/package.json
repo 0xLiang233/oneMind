@@ -1,0 +1,62 @@
+{
+  "name": "onemind-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"pnpm:dev:renderer\" \"pnpm:dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:electron": "wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "build": "tsc -b && vite build && tsc -p tsconfig.electron.main.json && tsc -p tsconfig.electron.preload.json",
+    "package": "pnpm build && electron-builder --win nsis --x64",
+    "package:portable": "pnpm build && electron-builder --win portable --x64",
+    "start": "electron .",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "main": "dist-electron/main.js",
+  "build": {
+    "appId": "com.onemind.desktop",
+    "productName": "OneMind",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json"
+    ],
+    "win": {},
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.2",
+    "@electron-toolkit/utils": "^4.0.0",
+    "@milkdown/crepe": "^7.21.2",
+    "concurrently": "^10.0.3",
+    "cross-env": "^10.1.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-router-dom": "^7.18.0",
+    "wait-on": "^9.0.10"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.12.3",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "electron": "^42.4.1",
+    "electron-builder": "^26.15.3",
+    "eslint": "^10.3.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.6.0",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.59.2",
+    "vite": "^8.0.12"
+  }
+}

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OneMind Tauri Probe</title>
+    <style>
+      :root {
+        font-family: "Segoe UI", system-ui, sans-serif;
+        color: #eaf1fb;
+        background: #0d1117;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top left, rgba(62, 130, 247, 0.18), transparent 22%),
+          #0d1117;
+      }
+
+      .shell {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 24px;
+        display: grid;
+        gap: 16px;
+      }
+
+      .panel {
+        padding: 18px;
+        border-radius: 16px;
+        background: rgba(18, 24, 33, 0.92);
+        border: 1px solid rgba(126, 152, 196, 0.22);
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 32px;
+      }
+
+      p, li, pre {
+        color: #b9c8dd;
+      }
+
+      .badge {
+        display: inline-block;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #16314e;
+        color: #d8ebff;
+      }
+
+      .ok {
+        color: #78e08f;
+      }
+
+      .warn {
+        color: #ffd166;
+      }
+
+      .report {
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #0a0f16;
+        border-radius: 12px;
+        padding: 14px;
+        min-height: 220px;
+      }
+    </style>
+    <script>
+      async function append(text) {
+        const report = document.querySelector("[data-role='report']");
+        if (report) report.textContent += text + "\n";
+      }
+
+      function mark(role, text, cls) {
+        const el = document.querySelector('[data-role="' + role + '"]');
+        if (!el) return;
+        el.textContent = text;
+        el.className = cls;
+      }
+
+      window.__PROBE_INLINE_OK__ = true;
+
+      window.addEventListener("DOMContentLoaded", async function () {
+        mark("inline-status", "Stage 2: inline script executed", "ok");
+
+        try {
+          if (!window.__TAURI_INTERNALS__ || !window.__TAURI_INTERNALS__.invoke) {
+            mark("bridge-status", "Stage 3: Tauri bridge missing", "warn");
+            await append("No Tauri bridge found on window.__TAURI_INTERNALS__");
+            return;
+          }
+
+          mark("bridge-status", "Stage 3: Tauri bridge present", "ok");
+          const invoke = window.__TAURI_INTERNALS__.invoke;
+
+          const report = await invoke("get_probe_report");
+          mark("invoke-status", "Stage 4: Rust invoke succeeded", "ok");
+          document.querySelector("[data-role='report']").textContent =
+            JSON.stringify(report, null, 2);
+
+          await invoke("write_probe_log", {
+            level: "info",
+            message: "static_probe_started",
+            context: JSON.stringify(report),
+          });
+        } catch (error) {
+          mark("invoke-status", "Stage 4: Rust invoke failed", "warn");
+          await append("Invoke failed:");
+          await append(String(error && error.stack ? error.stack : error));
+        }
+      });
+    </script>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel">
+        <div class="badge">Stage 1: static HTML loaded</div>
+        <h1>OneMind Tauri Probe</h1>
+        <p>If you can read this sentence, raw embedded HTML rendered successfully.</p>
+      </section>
+
+      <section class="panel">
+        <h2>Render Stages</h2>
+        <ul>
+          <li class="ok">Stage 1: static HTML visible</li>
+          <li data-role="inline-status" class="warn">Stage 2: waiting for inline script</li>
+          <li data-role="bridge-status" class="warn">Stage 3: waiting for Tauri bridge</li>
+          <li data-role="invoke-status" class="warn">Stage 4: waiting for Rust invoke</li>
+        </ul>
+      </section>
+
+      <section class="panel">
+        <h2>Probe Report</h2>
+        <pre class="report" data-role="report">Waiting for DOMContentLoaded...</pre>
+      </section>
+    </main>
+  </body>
+</html>

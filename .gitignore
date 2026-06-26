@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+apps/*/node_modules/
+
+# Build output
+dist/
+dist-electron/
+release/
+target/
+apps/*/dist/
+apps/desktop/dist-electron/
+apps/desktop/release/
+apps/tauri-probe/src-tauri/target/
+
+# Logs and local environment
+*.log
+*.local
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local artifacts and installers
+artifacts/
+rustup-init.exe
+vs_BuildTools.exe
+
+# Local-only linked prototype workspace
+docs/产品原型/
+docs/产品原型
+
+# Editor and OS files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
