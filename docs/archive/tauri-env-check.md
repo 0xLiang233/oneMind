@@ -45,13 +45,13 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 原因是当前开发环境里没有 `Rust/cargo`，我还不能直接在这里编译出一个 Tauri 可执行文件。
 
-下一步已经补上了一个最小探针应用：
+后续已经迁移为共享 renderer 的 Tauri shell：
 
 - 目录：`desktop/tauri`
-- 开发运行：`desktop/tauri/tools/run-probe.cmd`
-- 调试构建：`desktop/tauri/tools/build-probe.cmd`
+- 开发运行：`desktop/tauri/tools/dev-shell.cmd`
+- 构建：`desktop/tauri/tools/build-shell.cmd`
 
 构建产物默认输出到：
 
-- `desktop/tauri/src-tauri/target/debug/bundle/nsis/`
-- `desktop/tauri/src-tauri/target/debug/bundle/msi/`
+- `desktop/tauri/src-tauri/target/release/bundle/nsis/`
+- `desktop/tauri/src-tauri/target/release/bundle/msi/`

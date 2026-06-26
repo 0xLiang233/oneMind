@@ -1,16 +1,19 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OneMind Tauri Probe",
-  "version": "0.1.5",
-  "identifier": "com.onemind.tauriprobe",
+  "productName": "OneMind",
+  "version": "0.1.0",
+  "identifier": "com.onemind.desktop.tauri",
   "build": {
-    "frontendDist": "../probe-static"
+    "beforeDevCommand": "pnpm --dir ../../renderer dev",
+    "beforeBuildCommand": "pnpm --dir ../../renderer build",
+    "devUrl": "http://127.0.0.1:5173",
+    "frontendDist": "../../../renderer/dist"
   },
   "app": {
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "OneMind Tauri Probe",
+        "title": "OneMind",
         "width": 1040,
         "height": 760,
         "resizable": true

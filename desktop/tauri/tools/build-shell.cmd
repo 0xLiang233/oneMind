@@ -6,5 +6,5 @@ if errorlevel 1 exit /b %errorlevel%
 
 set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
 
-pnpm tauri build --debug
+pnpm build
 exit /b %errorlevel%

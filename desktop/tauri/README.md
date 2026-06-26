@@ -1,25 +1,20 @@
-# OneMind Tauri Probe
+# OneMind Tauri Shell
 
-Minimal Tauri app used to answer one question:
+This app is the Tauri desktop shell for the shared OneMind renderer in `../../renderer`.
 
-`Can this machine launch a Tauri window, render the frontend, and write logs?`
-
-## What it does
-
-- opens a minimal Tauri window
-- shows a runtime report from Rust
-- writes probe logs to the app data directory
-- captures frontend startup errors and unhandled rejections
+The current migration goal is to load the same React/Vite UI used by the Electron shell, then gradually replace Electron IPC features with Tauri commands.
 
 ## Run
 
 ```powershell
 pnpm install
-pnpm tauri dev
+pnpm dev:tauri
 ```
 
-## Expected result
+## Build
 
-If the app opens and shows the probe report, Tauri itself is viable on this machine.
+```powershell
+pnpm build:tauri
+```
 
-If it opens as a white screen or crashes, inspect the log file path shown in the UI.
+Some product features still depend on the `window.oneMind` bridge implemented by Electron preload. The renderer includes a fallback bridge so the Tauri shell can load without crashing while native commands are migrated.

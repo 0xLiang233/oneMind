@@ -10,7 +10,7 @@ use tauri::{AppHandle, Manager};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProbeReport {
+struct ShellReport {
     app_name: String,
     app_version: String,
     tauri_target: String,
@@ -31,7 +31,7 @@ fn now_iso_like() -> String {
 }
 
 fn resolve_fallback_log_file() -> PathBuf {
-    env::temp_dir().join("onemind-tauri-probe.log")
+    env::temp_dir().join("onemind-tauri.log")
 }
 
 fn append_global_log(level: &str, message: &str, context: Option<&str>) {
@@ -70,26 +70,26 @@ fn append_boot_log_line_with_context(app: &AppHandle, message: &str, context: &s
     }
 }
 
-fn resolve_probe_dir(app: &AppHandle) -> Result<PathBuf, String> {
+fn resolve_diagnostics_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let base = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
-    let dir = base.join("probe");
+    let dir = base.join("diagnostics");
     fs::create_dir_all(&dir).map_err(|e| format!("failed to create probe dir: {e}"))?;
     Ok(dir)
 }
 
 fn resolve_log_file(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(resolve_probe_dir(app)?.join("probe-log.jsonl"))
+    Ok(resolve_diagnostics_dir(app)?.join("shell-log.jsonl"))
 }
 
 #[tauri::command]
-fn get_probe_report(app: AppHandle) -> Result<ProbeReport, String> {
+fn get_shell_report(app: AppHandle) -> Result<ShellReport, String> {
     let log_file = resolve_log_file(&app)?;
-    let data_dir = resolve_probe_dir(&app)?;
+    let data_dir = resolve_diagnostics_dir(&app)?;
 
-    Ok(ProbeReport {
+    Ok(ShellReport {
         app_name: app.package_info().name.clone(),
         app_version: app.package_info().version.to_string(),
         tauri_target: env::consts::FAMILY.to_string(),
@@ -103,7 +103,7 @@ fn get_probe_report(app: AppHandle) -> Result<ProbeReport, String> {
 }
 
 #[tauri::command]
-fn write_probe_log(
+fn write_shell_log(
     app: AppHandle,
     level: String,
     message: String,
@@ -141,7 +141,7 @@ pub fn run() {
                 &format!("label={} url={}", window.label(), payload.url()),
             );
         })
-        .invoke_handler(tauri::generate_handler![get_probe_report, write_probe_log]);
+        .invoke_handler(tauri::generate_handler![get_shell_report, write_shell_log]);
 
     append_global_log("boot", "builder_configured", None);
 

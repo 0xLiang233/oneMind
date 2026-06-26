@@ -11,6 +11,7 @@
     "build:electron": "pnpm build:renderer && pnpm --dir desktop/electron build",
     "package:electron": "pnpm --dir desktop/electron package",
     "package:electron:portable": "pnpm --dir desktop/electron package:portable",
-    "dev:tauri": "pnpm --dir desktop/tauri tauri dev"
+    "dev:tauri": "pnpm --dir desktop/tauri dev",
+    "build:tauri": "pnpm --dir desktop/tauri build"
   }
 }

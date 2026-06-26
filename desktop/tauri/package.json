@@ -1,9 +1,11 @@
 {
-  "name": "onemind-tauri-probe",
+  "name": "onemind-desktop-tauri",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
     "tauri": "tauri"
   },
   "dependencies": {

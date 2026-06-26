@@ -16,7 +16,7 @@ fn now_iso_like() -> String {
 }
 
 fn main_log_path() -> PathBuf {
-    env::temp_dir().join("onemind-tauri-probe-main.log")
+    env::temp_dir().join("onemind-tauri-main.log")
 }
 
 fn append_main_log(message: &str) {
@@ -47,5 +47,5 @@ fn main() {
         }
     }));
     append_main_log("before_run");
-    onemind_tauri_probe_lib::run()
+    onemind_desktop_tauri_lib::run()
 }

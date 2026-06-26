@@ -61,6 +61,10 @@ type ViewBounds = {
 }
 
 contextBridge.exposeInMainWorld('oneMind', {
+  runtime: {
+    platform: 'electron',
+    bridgeReady: true
+  },
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize') as Promise<void>,
     toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize') as Promise<void>,

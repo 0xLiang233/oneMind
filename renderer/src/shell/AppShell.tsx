@@ -151,9 +151,9 @@ export function AppShell() {
   // Bridge init + auto-init default workspace
   useEffect(() => {
     const bridge = window.oneMind
-    if (!bridge?.workspace) {
+    if (!bridge?.workspace || bridge.runtime?.bridgeReady === false) {
       setBridgeReady(false)
-      setBridgeError("桌面桥接未加载。请通过 Electron 窗口启动。")
+      setBridgeError("当前桌面外壳尚未接入 OneMind 原生能力。")
       return
     }
     setBridgeReady(true)

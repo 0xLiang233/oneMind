@@ -60,6 +60,10 @@ type ViewBounds = {
 
 interface Window {
   oneMind: {
+    runtime?: {
+      platform: 'electron' | 'tauri' | 'unsupported'
+      bridgeReady: boolean
+    }
     window: {
       minimize: () => Promise<void>
       toggleMaximize: () => Promise<void>
