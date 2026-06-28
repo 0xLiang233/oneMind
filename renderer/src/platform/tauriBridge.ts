@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core"
+import { listen } from "@tauri-apps/api/event"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 
 const appWindow = getCurrentWindow()
@@ -13,15 +14,47 @@ export function createTauriBridge(): Window["oneMind"] {
       minimize: () => appWindow.minimize(),
       toggleMaximize: () => appWindow.toggleMaximize(),
       close: () => appWindow.close(),
-      onNavigate: () => () => undefined
+      onNavigate: (callback) => {
+        let disposed = false
+        let unlisten: (() => void) | null = null
+        void listen<string>("app-navigate", (event) => callback(event.payload)).then((nextUnlisten) => {
+          if (disposed) {
+            nextUnlisten()
+            return
+          }
+          unlisten = nextUnlisten
+        })
+        return () => {
+          disposed = true
+          unlisten?.()
+        }
+      }
     },
     floatNote: {
-      show: () => Promise.resolve(false),
-      hide: () => Promise.resolve(false),
-      setHeight: () => Promise.resolve(false),
-      openRoute: () => Promise.resolve(false),
-      registerShortcut: () => Promise.resolve(false),
-      onShown: () => () => undefined
+      show: () => invoke<boolean>("float_note_show"),
+      toggle: () => invoke<boolean>("float_note_toggle"),
+      hide: () => invoke<boolean>("float_note_hide"),
+      focus: () => appWindow.setFocus().then(() => true),
+      setHeight: (height) => invoke<boolean>("float_note_set_height", { height }),
+      openRoute: (route) => invoke<boolean>("float_note_open_route", { route }),
+      registerShortcut: (shortcut) => invoke<boolean>("float_note_register_shortcut", { shortcut }),
+      onShown: (callback) => {
+        let disposed = false
+        const unlisteners: Array<() => void> = []
+        const addUnlisten = (nextUnlisten: () => void) => {
+          if (disposed) {
+            nextUnlisten()
+            return
+          }
+          unlisteners.push(nextUnlisten)
+        }
+        void listen("float-note-shown", () => callback("shown")).then(addUnlisten)
+        void listen("float-note-focus-ready", () => callback("focus-ready")).then(addUnlisten)
+        return () => {
+          disposed = true
+          unlisteners.forEach((unlisten) => unlisten())
+        }
+      }
     },
     workspace: {
       getDefaultPath: () => invoke<string>("workspace_get_default_path"),
@@ -46,7 +79,8 @@ export function createTauriBridge(): Window["oneMind"] {
     },
     quickNotes: {
       list: (workspacePath) => invoke<QuickNote[]>("quick_notes_list", { workspacePath }),
-      create: (workspacePath, content) => invoke<QuickNote>("quick_notes_create", { workspacePath, content })
+      create: (workspacePath, content) => invoke<QuickNote>("quick_notes_create", { workspacePath, content }),
+      delete: (workspacePath, id) => invoke<boolean>("quick_notes_delete", { workspacePath, id })
     },
     miniapps: {
       list: (workspacePath) => invoke<MiniappSource[]>("miniapps_list", { workspacePath }),
@@ -65,11 +99,18 @@ export function createTauriBridge(): Window["oneMind"] {
       open: () => Promise.resolve(false)
     },
     miniappView: {
-      show: () => Promise.resolve(false),
-      setBounds: () => Promise.resolve(false),
-      hide: () => Promise.resolve(false),
-      reload: () => Promise.resolve(false),
-      close: () => Promise.resolve(false)
+      show: ({ viewKey, url, partition, bounds }) =>
+        invoke<boolean>("miniapp_view_show", { viewKey, url, partition, bounds }),
+      setBounds: ({ viewKey, bounds }) => invoke<boolean>("miniapp_view_set_bounds", { viewKey, bounds }),
+      hide: () => invoke<boolean>("miniapp_view_hide"),
+      reload: ({ viewKey, url }) => invoke<boolean>("miniapp_view_reload", { viewKey, url }),
+      close: (viewKey) => invoke<boolean>("miniapp_view_close", { viewKey })
+    },
+    diagnostics: {
+      getShellReport: () => invoke<ShellReport>("get_shell_report"),
+      getDebugMode: () => invoke<DebugModeReport>("diagnostics_get_debug_mode"),
+      writeLog: (level, message, context) => invoke<void>("write_shell_log", { level, message, context }),
+      openDevtools: (label) => invoke<boolean>("diagnostics_open_devtools", { label })
     }
   }
 }

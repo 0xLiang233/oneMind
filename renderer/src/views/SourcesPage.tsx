@@ -86,7 +86,7 @@ export function SourcesPage() {
           return
         }
 
-        void window.oneMind.miniappView.setBounds(bounds)
+        void window.oneMind.miniappView.setBounds({ viewKey, bounds })
       })
     }
 

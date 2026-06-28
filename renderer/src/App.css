@@ -426,20 +426,24 @@ body.float-note-shell #root {
   overflow: hidden;
 }
 .float-note-page {
-  width: 100vw;
-  height: 100vh;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
   display: grid;
   align-items: start;
   justify-items: center;
   padding: 6px;
   background: transparent;
   color: var(--color-text-primary);
+  overflow: hidden;
 }
 .float-note-palette {
+  box-sizing: border-box;
   width: 100%;
+  max-width: 100%;
   position: relative;
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-float);
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(14px) saturate(1.08);
   -webkit-backdrop-filter: blur(14px) saturate(1.08);
@@ -508,12 +512,12 @@ body.float-note-shell #root {
 }
 .float-note-text-input {
   min-height: 32px;
-  max-height: 280px;
+  max-height: none;
+  box-sizing: border-box;
   padding: 2px 0;
   resize: none;
-  line-height: 1.55;
+  line-height: 28px;
   overflow: hidden;
-  transition: height 120ms linear;
 }
 .float-note-text-input:disabled {
   opacity: 1;
@@ -571,8 +575,9 @@ body.float-note-shell #root {
   min-height: 0;
   max-height: 238px;
   overflow: auto;
-  padding: 4px 8px 8px;
+  padding: 4px 8px 14px;
   border-top: 1px solid var(--color-border-subtle);
+  border-radius: 0 0 14px 14px;
   scrollbar-gutter: stable;
 }
 .float-note-results::-webkit-scrollbar {
@@ -670,9 +675,10 @@ body.float-note-shell #root {
   font-size: 13px;
 }
 .float-note-app-grid {
-  min-height: 116px;
-  padding: 2px 18px 12px;
+  min-height: 132px;
+  padding: 2px 18px 18px;
   border-top: 1px solid var(--color-border-subtle);
+  border-radius: 0 0 14px 14px;
 }
 .float-note-section-title {
   height: 24px;
@@ -741,13 +747,13 @@ body.float-note-shell #root {
   -webkit-box-orient: vertical;
 }
 .float-note-hint-bar {
-  height: 26px;
+  height: 42px;
   display: flex;
-  align-items: center;
-  padding: 0 24px 0 72px;
+  align-items: flex-start;
+  padding: 0 24px 14px 72px;
   color: var(--color-text-tertiary);
   font-size: 11px;
-  line-height: 1;
+  line-height: 18px;
   opacity: 0.68;
   pointer-events: none;
   white-space: nowrap;
@@ -1012,24 +1018,27 @@ body.float-note-shell #root {
 
 /* ===== Capture (Quick Note) Page ===== */
 .quicknote-page {
-  min-height: 100%;
-  grid-template-rows: auto auto 1fr;
+  min-height: 0;
+  height: 100%;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 0;
+  overflow: hidden;
   background: var(--color-bg-base);
 }
 
 .quicknote-topbar {
-  min-height: 44px;
+  min-height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 28px;
+  padding: 0 32px 0 34px;
   border-bottom: 1px solid var(--color-border-subtle);
   background: var(--color-bg-base);
 }
 
 .quicknote-title {
   color: var(--color-text-primary);
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
 }
 
@@ -1040,7 +1049,7 @@ body.float-note-shell #root {
 }
 
 .quicknote-composer-inline {
-  width: min(760px, calc(100% - 96px));
+  width: min(920px, calc(100% - 112px));
   margin: 28px auto 0;
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-lg);
@@ -1049,13 +1058,14 @@ body.float-note-shell #root {
   grid-template-columns: 1fr auto;
   align-items: end;
   gap: var(--space-3);
-  padding: var(--space-3);
+  padding: 16px 18px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
 }
 
 .quicknote-inline-input {
   border: 0;
   outline: 0;
-  min-height: 44px;
+  min-height: 52px;
   max-height: 96px;
   resize: vertical;
   background: transparent;
@@ -1070,22 +1080,27 @@ body.float-note-shell #root {
 }
 
 .quicknote-timeline {
-  width: min(760px, calc(100% - 96px));
-  margin: 24px auto 80px;
+  width: min(936px, calc(100% - 96px));
+  min-height: 0;
+  margin: 0 auto;
+  padding: 26px 8px 80px;
   display: grid;
   align-content: start;
-  gap: var(--space-4);
+  gap: 18px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .quicknote-date-group {
   display: grid;
-  gap: var(--space-3);
+  gap: 10px;
 }
 
 .date-group-header {
   color: var(--color-text-tertiary);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
+  padding: 2px 0 0;
 }
 .capture-composer, .capture-timeline {
   border-radius: var(--radius-float);
@@ -1119,18 +1134,19 @@ body.float-note-shell #root {
 }
 .quick-card {
   position: relative;
-  padding: var(--space-4);
-  border-radius: var(--radius-lg);
+  padding: 16px 112px 14px 18px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-border-subtle);
   background: var(--color-bg-elevated);
   display: grid;
-  gap: var(--space-3);
+  gap: 8px;
   cursor: pointer;
-  transition: border-color var(--transition-fast), background var(--transition-fast);
+  transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
 }
 .quick-card:hover {
   border-color: var(--color-border-default);
   background: var(--color-quick-card-hover-bg);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
 }
 .quick-card.selected {
   border-color: var(--color-accent-primary);
@@ -1139,8 +1155,8 @@ body.float-note-shell #root {
 
 .quick-card-checkbox-native {
   position: absolute;
-  left: -28px;
-  top: 18px;
+  left: -24px;
+  top: 16px;
   accent-color: var(--color-accent-primary);
 }
 
@@ -1151,37 +1167,64 @@ body.float-note-shell #root {
   gap: var(--space-2);
 }
 .quick-card-time {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-text-tertiary);
 }
 .quick-card-content {
-  font-size: 16px;
+  font-size: 15px;
   color: var(--color-text-primary);
-  line-height: 1.6;
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
 }
 .tag-chip--ai {
   display: inline-flex;
   align-items: center;
-  padding: 4px 10px;
+  padding: 2px 8px;
   border-radius: 999px;
   border: 1px solid rgba(56, 189, 248, 0.22);
   background: var(--color-accent-secondary-glow);
   color: var(--color-accent-secondary);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
 }
 
-.quick-card-action {
+.quick-card-actions {
   position: absolute;
   right: 16px;
-  bottom: 14px;
+  top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   opacity: 0;
   pointer-events: none;
+  transition: opacity var(--transition-fast);
 }
 
-.quick-card:hover .quick-card-action {
+.quick-card-action {
+  padding: 0;
+  min-height: 24px;
+  border: 0;
+  border-radius: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.quick-card-action:hover {
+  background: transparent;
+  color: var(--color-text-primary);
+}
+
+.quick-card-action--muted:hover {
+  color: var(--color-danger);
+}
+
+.quick-card:hover .quick-card-actions,
+.quick-card:focus-within .quick-card-actions {
   opacity: 1;
   pointer-events: auto;
 }

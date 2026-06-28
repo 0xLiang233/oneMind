@@ -77,6 +77,7 @@ contextBridge.exposeInMainWorld('oneMind', {
   },
   floatNote: {
     show: () => ipcRenderer.invoke('float-note:show') as Promise<boolean>,
+    toggle: () => ipcRenderer.invoke('float-note:toggle') as Promise<boolean>,
     hide: () => ipcRenderer.invoke('float-note:hide') as Promise<boolean>,
     setHeight: (height: number) => ipcRenderer.invoke('float-note:set-height', height) as Promise<boolean>,
     openRoute: (route: string) => ipcRenderer.invoke('float-note:open-route', route) as Promise<boolean>,
@@ -129,7 +130,9 @@ contextBridge.exposeInMainWorld('oneMind', {
     list: (workspacePath: string) =>
       ipcRenderer.invoke('quick-notes:list', workspacePath) as Promise<QuickNote[]>,
     create: (workspacePath: string, content: string) =>
-      ipcRenderer.invoke('quick-notes:create', workspacePath, content) as Promise<QuickNote>
+      ipcRenderer.invoke('quick-notes:create', workspacePath, content) as Promise<QuickNote>,
+    delete: (workspacePath: string, id: string) =>
+      ipcRenderer.invoke('quick-notes:delete', workspacePath, id) as Promise<boolean>
   },
   miniapps: {
     list: (workspacePath: string) =>
@@ -156,12 +159,28 @@ contextBridge.exposeInMainWorld('oneMind', {
   miniappView: {
     show: (input: { viewKey: string; url: string; partition: string; bounds: ViewBounds }) =>
       ipcRenderer.invoke('miniapp-view:show', input) as Promise<boolean>,
-    setBounds: (bounds: ViewBounds) =>
-      ipcRenderer.invoke('miniapp-view:set-bounds', bounds) as Promise<boolean>,
+    setBounds: (input: { viewKey: string; bounds: ViewBounds }) =>
+      ipcRenderer.invoke('miniapp-view:set-bounds', input) as Promise<boolean>,
     hide: () => ipcRenderer.invoke('miniapp-view:hide') as Promise<boolean>,
     reload: (input: { viewKey: string; url: string }) =>
       ipcRenderer.invoke('miniapp-view:reload', input) as Promise<boolean>,
     close: (viewKey: string) =>
       ipcRenderer.invoke('miniapp-view:close', viewKey) as Promise<boolean>
+  },
+  diagnostics: {
+    getShellReport: () => Promise.resolve({
+      appName: 'OneMind',
+      appVersion: '0.0.0',
+      runtimeTarget: 'electron',
+      platform: process.platform,
+      arch: process.arch,
+      dev: !process.env.NODE_ENV || process.env.NODE_ENV === 'development',
+      logFile: '',
+      dataDir: '',
+      generatedAt: String(Date.now())
+    }),
+    getDebugMode: () => Promise.resolve({ enabled: false, source: 'electron' }),
+    writeLog: () => Promise.resolve(),
+    openDevtools: () => Promise.resolve(false)
   }
 })

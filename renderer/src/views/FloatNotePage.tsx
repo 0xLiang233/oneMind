@@ -28,13 +28,17 @@ const commands: FloatCommand[] = [
 ]
 
 const FLOAT_PAGE_VERTICAL_PADDING = 12
-const FLOAT_HEADER_VERTICAL_PADDING = 34
-const FLOAT_HINT_HEIGHT = 26
+const FLOAT_HEADER_BASE_HEIGHT = 58
+const FLOAT_HEADER_VERTICAL_PADDING = 29
+const FLOAT_HINT_HEIGHT = 42
+const QUICK_INPUT_LINE_HEIGHT = 28
 const QUICK_INPUT_MIN_HEIGHT = 32
-const QUICK_INPUT_MAX_HEIGHT = 280
-const FLOAT_MIN_WINDOW_HEIGHT = 136
-const FLOAT_TOOL_RESULT_HEIGHT = 36
-const FLOAT_TOOL_RESULT_PADDING = 4
+const QUICK_INPUT_MAX_LINES = 10
+const QUICK_INPUT_VERTICAL_PADDING = 4
+const FLOAT_MIN_WINDOW_HEIGHT = 150
+const FLOAT_TOOL_HOME_HEIGHT = 132
+const FLOAT_TOOL_RESULT_HEIGHT = 42
+const FLOAT_TOOL_RESULT_PADDING = 18
 
 function QuickModeIcon() {
   return (
@@ -62,7 +66,115 @@ export function FloatNotePage() {
   const [status, setStatus] = useState("")
   const [saveState, setSaveState] = useState<SaveState>("idle")
   const [systemApps, setSystemApps] = useState<SystemAppEntry[]>([])
+  const [bridgeReadyToken, setBridgeReadyToken] = useState(0)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  const lastWindowHeightRef = useRef(0)
+  const pendingWindowHeightRef = useRef(0)
+  const resizeFrameRef = useRef(0)
+  const focusTimersRef = useRef<number[]>([])
+  const debugEnabledRef = useRef(false)
+
+  function getFocusSnapshot(stage: string) {
+    const input = inputRef.current
+    const activeElement = document.activeElement as HTMLElement | null
+    return JSON.stringify({
+      stage,
+      hasDocumentFocus: document.hasFocus(),
+      visibilityState: document.visibilityState,
+      activeTag: activeElement?.tagName ?? null,
+      activeClass: activeElement?.className ?? null,
+      inputExists: Boolean(input),
+      inputDisabled: Boolean(input?.disabled),
+      inputIsActive: Boolean(input && activeElement === input),
+      valueLength: input?.value.length ?? null
+    })
+  }
+
+  function writeDebugLog(message: string, context?: string) {
+    if (!debugEnabledRef.current) return
+    void window.oneMind.diagnostics.writeLog("renderer-debug", message, context).catch((error: unknown) => {
+      console.warn("Failed to write float note debug log:", error)
+    })
+  }
+
+  function focusInput() {
+    const input = inputRef.current
+    writeDebugLog("float_note_focus_input_before", getFocusSnapshot("before"))
+    if (!input || input.disabled) {
+      writeDebugLog("float_note_focus_input_skipped", getFocusSnapshot("skipped"))
+      return
+    }
+    input.blur()
+    input.focus({ preventScroll: true })
+    const end = input.value.length
+    input.setSelectionRange(end, end)
+    window.setTimeout(() => {
+      writeDebugLog("float_note_focus_input_after", getFocusSnapshot("after_timeout_0"))
+    }, 0)
+  }
+
+  function clearFocusTimers() {
+    focusTimersRef.current.forEach((timer) => window.clearTimeout(timer))
+    focusTimersRef.current = []
+  }
+
+  function requestInputFocus() {
+    clearFocusTimers()
+    writeDebugLog("float_note_request_input_focus", getFocusSnapshot("request_start"))
+    void window.oneMind.floatNote.focus()
+    window.requestAnimationFrame(() => {
+      void window.oneMind.floatNote.focus().finally(focusInput)
+    })
+    ;[0, 50, 140, 260, 500, 900].forEach((delay) => {
+      const timer = window.setTimeout(() => {
+        void window.oneMind.floatNote.focus().finally(focusInput)
+      }, delay)
+      focusTimersRef.current.push(timer)
+    })
+  }
+
+  function getVisualLineCount(text: string) {
+    return Math.max(1, text.split("\n").length)
+  }
+
+  function getQuickInputHeight(text = value) {
+    const lines = Math.min(getVisualLineCount(text), QUICK_INPUT_MAX_LINES)
+    return Math.max(QUICK_INPUT_MIN_HEIGHT, Math.ceil(lines * QUICK_INPUT_LINE_HEIGHT + QUICK_INPUT_VERTICAL_PADDING))
+  }
+
+  function resizeQuickInput(text = value) {
+    const input = inputRef.current
+    if (!input) return QUICK_INPUT_MIN_HEIGHT
+    const inputHeight = getQuickInputHeight(text)
+    input.style.height = `${inputHeight}px`
+    input.style.overflowY = getVisualLineCount(text) > QUICK_INPUT_MAX_LINES ? "auto" : "hidden"
+    input.scrollTop = input.scrollHeight
+    return inputHeight
+  }
+
+  function scheduleWindowHeight(height: number) {
+    if (height === lastWindowHeightRef.current) return
+    pendingWindowHeightRef.current = height
+    if (resizeFrameRef.current) return
+    resizeFrameRef.current = window.requestAnimationFrame(() => {
+      resizeFrameRef.current = 0
+      const nextHeight = pendingWindowHeightRef.current
+      if (nextHeight === lastWindowHeightRef.current) return
+      lastWindowHeightRef.current = nextHeight
+      void window.oneMind.floatNote.setHeight(nextHeight)
+    })
+  }
+
+  function getResultHeight() {
+    if (mode !== "tools") return 0
+    if (isToolHome) return FLOAT_TOOL_HOME_HEIGHT
+    return Math.min(Math.max(toolResults.length, 1), 5) * FLOAT_TOOL_RESULT_HEIGHT + FLOAT_TOOL_RESULT_PADDING
+  }
+
+  function getWindowHeight(inputHeight: number) {
+    const headerHeight = Math.max(FLOAT_HEADER_BASE_HEIGHT, inputHeight + FLOAT_HEADER_VERTICAL_PADDING)
+    return Math.max(FLOAT_MIN_WINDOW_HEIGHT, Math.ceil(headerHeight + getResultHeight() + FLOAT_HINT_HEIGHT + FLOAT_PAGE_VERTICAL_PADDING))
+  }
 
   const commandMatches = useMemo(() => {
     const query = value.trim().toLowerCase()
@@ -93,20 +205,99 @@ export function FloatNotePage() {
   const isToolHome = mode === "tools" && !value.trim()
 
   useEffect(() => {
+    function handleBridgeReady() {
+      setBridgeReadyToken((current) => current + 1)
+    }
+
+    window.addEventListener("oneMindBridgeReady", handleBridgeReady)
+    return () => window.removeEventListener("oneMindBridgeReady", handleBridgeReady)
+  }, [])
+
+  useEffect(() => {
+    let disposed = false
+    async function initDebugMode() {
+      const localEnabled = localStorage.getItem("onemindDebug") === "1"
+        || localStorage.getItem("onemind:debug") === "1"
+      const report = await window.oneMind.diagnostics.getDebugMode().catch(() => ({ enabled: false, source: "unavailable" }))
+      if (disposed) return
+      debugEnabledRef.current = localEnabled || report.enabled
+      writeDebugLog("float_note_debug_mode_ready", JSON.stringify({
+        localEnabled,
+        nativeEnabled: report.enabled,
+        source: report.source
+      }))
+    }
+
+    void initDebugMode()
+    return () => {
+      disposed = true
+    }
+  }, [bridgeReadyToken])
+
+  useEffect(() => {
+    function handleWindowFocus() {
+      writeDebugLog("float_note_window_focus_event", getFocusSnapshot("window_focus"))
+      requestInputFocus()
+    }
+
+    function handleVisibilityChange() {
+      writeDebugLog("float_note_visibility_change", getFocusSnapshot("visibility_change"))
+      if (document.visibilityState === "visible") {
+        requestInputFocus()
+      }
+    }
+
+    window.addEventListener("focus", handleWindowFocus)
+    document.addEventListener("visibilitychange", handleVisibilityChange)
+    return () => {
+      window.removeEventListener("focus", handleWindowFocus)
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
+    }
+  }, [])
+
+  useEffect(() => {
     document.documentElement.classList.add("float-note-shell")
     document.body.classList.add("float-note-shell")
-    void window.oneMind.workspace.initDefault().then(setWorkspace)
-    const unsubscribe = window.oneMind.floatNote.onShown(() => {
-      resetPalette()
-      window.requestAnimationFrame(() => inputRef.current?.focus())
+    if (window.oneMind.runtime?.bridgeReady === false) {
+      return () => {
+        document.documentElement.classList.remove("float-note-shell")
+        document.body.classList.remove("float-note-shell")
+      }
+    }
+
+    let disposed = false
+    void window.oneMind.workspace.initDefault().then((nextWorkspace) => {
+      if (!disposed) setWorkspace(nextWorkspace)
+    }).catch((error: unknown) => {
+      console.warn("Failed to initialize float note workspace:", error)
     })
-    window.requestAnimationFrame(() => inputRef.current?.focus())
+    const unsubscribe = window.oneMind.floatNote.onShown((reason) => {
+      writeDebugLog("float_note_on_shown_event", JSON.stringify({ reason, snapshot: JSON.parse(getFocusSnapshot("on_shown")) }))
+      if (reason === "shown") {
+        resetPalette()
+      }
+      window.requestAnimationFrame(() => {
+        if (reason === "shown") {
+          syncPanelHeight()
+        }
+        requestInputFocus()
+      })
+    })
+    window.requestAnimationFrame(() => {
+      syncPanelHeight()
+      requestInputFocus()
+    })
     return () => {
+      disposed = true
       unsubscribe()
+      clearFocusTimers()
+      if (resizeFrameRef.current) {
+        window.cancelAnimationFrame(resizeFrameRef.current)
+      }
       document.documentElement.classList.remove("float-note-shell")
       document.body.classList.remove("float-note-shell")
     }
-  }, [])
+  }, [bridgeReadyToken])
 
   useEffect(() => {
     if (!workspace || mode !== "tools") return
@@ -123,29 +314,13 @@ export function FloatNotePage() {
   }, [mode, value, workspace])
 
   function syncPanelHeight() {
-    const input = inputRef.current
-    let inputHeight = QUICK_INPUT_MIN_HEIGHT
-    if (input) {
-      input.style.height = "auto"
-      const contentHeight = input.scrollHeight
-      inputHeight = Math.min(Math.max(contentHeight, QUICK_INPUT_MIN_HEIGHT), QUICK_INPUT_MAX_HEIGHT)
-      input.style.height = `${inputHeight}px`
-      input.style.overflowY = contentHeight > QUICK_INPUT_MAX_HEIGHT ? "auto" : "hidden"
-    }
-
-    const headerHeight = Math.max(58, inputHeight + FLOAT_HEADER_VERTICAL_PADDING)
-    const resultHeight = mode === "tools"
-      ? isToolHome
-        ? 116
-        : Math.min(Math.max(toolResults.length, 1), 5) * FLOAT_TOOL_RESULT_HEIGHT + FLOAT_TOOL_RESULT_PADDING
-      : 0
-    const nextWindowHeight = Math.max(FLOAT_MIN_WINDOW_HEIGHT, Math.ceil(headerHeight + resultHeight + FLOAT_HINT_HEIGHT + FLOAT_PAGE_VERTICAL_PADDING))
-    void window.oneMind.floatNote.setHeight(nextWindowHeight)
+    const inputHeight = resizeQuickInput()
+    scheduleWindowHeight(getWindowHeight(inputHeight))
   }
 
   useLayoutEffect(() => {
     syncPanelHeight()
-  }, [toolResults.length, mode, value, saveState])
+  }, [toolResults.length, mode, saveState])
 
   function resetPalette() {
     setMode("quick")
@@ -164,27 +339,25 @@ export function FloatNotePage() {
     setValue("")
     setActiveIndex(0)
     setStatus("")
-    window.setTimeout(() => inputRef.current?.focus(), 0)
+    requestInputFocus()
   }
 
   function handleValueChange(event: React.ChangeEvent<HTMLTextAreaElement>) {
-    const input = event.currentTarget
-    input.style.height = "auto"
-    const contentHeight = input.scrollHeight
-    const inputHeight = Math.min(Math.max(contentHeight, QUICK_INPUT_MIN_HEIGHT), QUICK_INPUT_MAX_HEIGHT)
-    input.style.height = `${inputHeight}px`
-    input.style.overflowY = contentHeight > QUICK_INPUT_MAX_HEIGHT ? "auto" : "hidden"
-    setValue(event.target.value)
+    const nextValue = event.target.value
+    const inputHeight = resizeQuickInput(nextValue)
+    scheduleWindowHeight(getWindowHeight(inputHeight))
+    setValue(nextValue)
     setActiveIndex(0)
-    window.requestAnimationFrame(syncPanelHeight)
   }
 
   async function saveQuickNote(closeAfterSave: boolean) {
     const content = value.trim()
-    if (!workspace || !content || saveState === "saving") return
+    if (!content || saveState === "saving") return
     setSaveState("saving")
     setStatus("")
-    await window.oneMind.quickNotes.create(workspace.workspacePath, content)
+    const activeWorkspace = workspace ?? await window.oneMind.workspace.initDefault()
+    setWorkspace(activeWorkspace)
+    await window.oneMind.quickNotes.create(activeWorkspace.workspacePath, content)
     setSaveState("saved")
     setStatus("已保存")
     if (closeAfterSave) {
@@ -198,7 +371,7 @@ export function FloatNotePage() {
       setValue("")
       setStatus("")
       setSaveState("idle")
-      window.setTimeout(() => inputRef.current?.focus(), 0)
+      requestInputFocus()
     }, 520)
   }
 
@@ -221,10 +394,6 @@ export function FloatNotePage() {
 
     if (event.key === "Escape") {
       event.preventDefault()
-      if (value.trim()) {
-        setValue("")
-        return
-      }
       void window.oneMind.floatNote.hide()
       return
     }
@@ -269,8 +438,12 @@ export function FloatNotePage() {
   const shortcutHint = mode === "quick" ? "Enter 保存 · Shift+Enter 换行 · Shift+Tab 切换模式" : "Enter 打开 · 方向键选择 · Shift+Tab 切换模式"
 
   return (
-    <main className="float-note-page">
-      <section className={"float-note-palette mode-" + mode}>
+    <main className="float-note-page" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) {
+        void window.oneMind.floatNote.hide()
+      }
+    }}>
+      <section className={"float-note-palette mode-" + mode} onMouseDown={(event) => event.stopPropagation()}>
         <header className="float-note-header">
           <button type="button" className="float-note-mode-wheel" onClick={switchMode} aria-label="切换模式">
             <span className="float-note-mode-wheel-track">

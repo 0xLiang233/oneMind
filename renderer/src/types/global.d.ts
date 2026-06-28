@@ -58,6 +58,23 @@ type ViewBounds = {
   height: number
 }
 
+type ShellReport = {
+  appName: string
+  appVersion: string
+  runtimeTarget: string
+  platform: string
+  arch: string
+  dev: boolean
+  logFile: string
+  dataDir: string
+  generatedAt: string
+}
+
+type DebugModeReport = {
+  enabled: boolean
+  source: string
+}
+
 interface Window {
   oneMind: {
     runtime?: {
@@ -72,11 +89,13 @@ interface Window {
     }
     floatNote: {
       show: () => Promise<boolean>
+      toggle: () => Promise<boolean>
       hide: () => Promise<boolean>
+      focus: () => Promise<boolean>
       setHeight: (height: number) => Promise<boolean>
       openRoute: (route: string) => Promise<boolean>
       registerShortcut: (shortcut: string) => Promise<boolean>
-      onShown: (callback: () => void) => () => void
+      onShown: (callback: (reason?: 'shown' | 'focus-ready') => void) => () => void
     }
     workspace: {
       getDefaultPath: () => Promise<string>
@@ -103,6 +122,7 @@ interface Window {
     quickNotes: {
       list: (workspacePath: string) => Promise<QuickNote[]>
       create: (workspacePath: string, content: string) => Promise<QuickNote>
+      delete: (workspacePath: string, id: string) => Promise<boolean>
     }
     miniapps: {
       list: (workspacePath: string) => Promise<MiniappSource[]>
@@ -120,10 +140,16 @@ interface Window {
     }
     miniappView: {
       show: (input: { viewKey: string; url: string; partition: string; bounds: ViewBounds }) => Promise<boolean>
-      setBounds: (bounds: ViewBounds) => Promise<boolean>
+      setBounds: (input: { viewKey: string; bounds: ViewBounds }) => Promise<boolean>
       hide: () => Promise<boolean>
       reload: (input: { viewKey: string; url: string }) => Promise<boolean>
       close: (viewKey: string) => Promise<boolean>
+    }
+    diagnostics: {
+      getShellReport: () => Promise<ShellReport>
+      getDebugMode: () => Promise<DebugModeReport>
+      writeLog: (level: string, message: string, context?: string) => Promise<void>
+      openDevtools: (label?: string) => Promise<boolean>
     }
   }
 }

@@ -22,6 +22,15 @@ function applyPreferences(preferences: AppPreferences) {
   root.style.setProperty("--md-editor-font-size", `${preferences.editorFontSize}px`)
 }
 
+async function activateShellPreferences(preferences: AppPreferences) {
+  applyPreferences(preferences)
+  try {
+    await window.oneMind.floatNote.registerShortcut(preferences.floatNoteShortcut)
+  } catch (error) {
+    console.warn("Failed to register float note shortcut:", error)
+  }
+}
+
 const routeLabels: Record<string, string> = {
   "/home": "首页",
   "/capture": "随记",
@@ -170,7 +179,8 @@ export function AppShell() {
         setWorkspace(ws)
         const preferences = await bridge.preferences.read(ws.workspacePath)
         if (cancelled) return
-        applyPreferences(preferences)
+        await activateShellPreferences(preferences)
+        if (cancelled) return
         if (initialPathRef.current === "/" || initialPathRef.current === "/home") {
           if (preferences.startupPage === "notes") {
             navigate("/notes")
@@ -330,7 +340,7 @@ export function AppShell() {
       const result = await window.oneMind.workspace.initDefault()
       setWorkspace(result)
       const preferences = await window.oneMind.preferences.read(result.workspacePath)
-      applyPreferences(preferences)
+      await activateShellPreferences(preferences)
     } finally { setBusy(false) }
   }
 
@@ -342,7 +352,7 @@ export function AppShell() {
       if (result) {
         setWorkspace(result)
         const preferences = await window.oneMind.preferences.read(result.workspacePath)
-        applyPreferences(preferences)
+        await activateShellPreferences(preferences)
       }
     } finally { setBusy(false) }
   }

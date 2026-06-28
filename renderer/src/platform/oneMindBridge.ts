@@ -9,6 +9,18 @@ const unsupportedPreferences: AppPreferences = {
   floatNoteShortcut: "Alt+Space"
 }
 
+const unsupportedShellReport: ShellReport = {
+  appName: "OneMind",
+  appVersion: "0.0.0",
+  runtimeTarget: "unknown",
+  platform: "unknown",
+  arch: "unknown",
+  dev: false,
+  logFile: "",
+  dataDir: "",
+  generatedAt: ""
+}
+
 function unsupported<T>(feature: string): Promise<T> {
   return Promise.reject(new Error(`${feature} is not available in this desktop shell yet.`))
 }
@@ -40,7 +52,9 @@ export function installOneMindBridgeFallback() {
     },
     floatNote: {
       show: () => Promise.resolve(false),
+      toggle: () => Promise.resolve(false),
       hide: () => Promise.resolve(false),
+      focus: () => Promise.resolve(false),
       setHeight: () => Promise.resolve(false),
       openRoute: () => Promise.resolve(false),
       registerShortcut: () => Promise.resolve(false),
@@ -65,7 +79,8 @@ export function installOneMindBridgeFallback() {
     },
     quickNotes: {
       list: () => Promise.resolve([]),
-      create: () => unsupported<QuickNote>("quickNotes.create")
+      create: () => unsupported<QuickNote>("quickNotes.create"),
+      delete: () => Promise.resolve(false)
     },
     miniapps: {
       list: () => Promise.resolve([]),
@@ -87,6 +102,12 @@ export function installOneMindBridgeFallback() {
       hide: () => Promise.resolve(false),
       reload: () => Promise.resolve(false),
       close: () => Promise.resolve(false)
+    },
+    diagnostics: {
+      getShellReport: () => Promise.resolve(unsupportedShellReport),
+      getDebugMode: () => Promise.resolve({ enabled: false, source: "unsupported" }),
+      writeLog: () => Promise.resolve(),
+      openDevtools: () => Promise.resolve(false)
     }
   }
 }

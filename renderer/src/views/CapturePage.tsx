@@ -12,6 +12,7 @@ type OutletContext = {
 
 function formatQuickNoteTime(value: string) {
   const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "时间未知"
   return new Intl.DateTimeFormat("zh-CN", {
     month: "numeric",
     day: "numeric",
@@ -22,6 +23,7 @@ function formatQuickNoteTime(value: string) {
 
 function formatDateGroup(value: string) {
   const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return "时间未知"
   const today = new Date()
   const yesterday = new Date()
   yesterday.setDate(today.getDate() - 1)
@@ -172,9 +174,31 @@ export function CapturePage() {
   }
 
   async function handleBatchDelete() {
-    if (selectedIds.length === 0) return
-    setItems(prev => prev.filter(n => !selectedIds.includes(n.id)))
+    if (!workspace || selectedIds.length === 0) return
+    const ids = selectedIds
+    const previousItems = items
+    setItems(prev => prev.filter(n => !ids.includes(n.id)))
     exitSelectMode()
+    try {
+      await Promise.all(ids.map(id => window.oneMind.quickNotes.delete(workspace.workspacePath, id)))
+      setStatus(`已删除 ${ids.length} 条随记。`)
+    } catch {
+      setItems(previousItems)
+      setStatus("删除失败，请重试。")
+    }
+  }
+
+  async function handleDeleteItem(item: QuickNote) {
+    if (!workspace) return
+    const previousItems = items
+    setItems(prev => prev.filter(n => n.id !== item.id))
+    try {
+      const deleted = await window.oneMind.quickNotes.delete(workspace.workspacePath, item.id)
+      setStatus(deleted ? "随记已删除。" : "没有找到要删除的随记。")
+    } catch {
+      setItems(previousItems)
+      setStatus("删除失败，请重试。")
+    }
   }
 
   function handleBatchAiOrganize() {
@@ -265,14 +289,24 @@ export function CapturePage() {
                   {item.content.length > 40 ? <span className="tag-chip--ai">+ AI 标记</span> : null}
                 </div>
                 {!selectMode && (
-                  <button
-                    type="button"
-                    className="quick-card-action"
-                    onClick={(event) => { event.stopPropagation(); void handleConvertToNote(item) }}
-                    disabled={!workspace || convertingId === item.id}
-                  >
-                    {convertingId === item.id ? "创建中..." : "转为正文"}
-                  </button>
+                  <div className="quick-card-actions">
+                    <button
+                      type="button"
+                      className="quick-card-action quick-card-action--muted"
+                      onClick={(event) => { event.stopPropagation(); void handleDeleteItem(item) }}
+                      disabled={!workspace}
+                    >
+                      删除
+                    </button>
+                    <button
+                      type="button"
+                      className="quick-card-action"
+                      onClick={(event) => { event.stopPropagation(); void handleConvertToNote(item) }}
+                      disabled={!workspace || convertingId === item.id}
+                    >
+                      {convertingId === item.id ? "创建中..." : "转为正文"}
+                    </button>
+                  </div>
                 )}
               </article>
             ))}

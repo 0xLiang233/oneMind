@@ -1,4 +1,4 @@
-import { app, BrowserWindow, WebContentsView, dialog, globalShortcut, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, WebContentsView, dialog, globalShortcut, ipcMain, screen, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -623,7 +623,7 @@ async function ensureFloatNoteWindow() {
     width: 724,
     height: 136,
     minWidth: 520,
-    minHeight: 110,
+    minHeight: 150,
     show: false,
     frame: false,
     resizable: false,
@@ -655,12 +655,15 @@ async function ensureFloatNoteWindow() {
 
 async function showFloatNoteWindow() {
   const win = await ensureFloatNoteWindow()
-  const display = mainWindow?.getBounds()
-  if (display) {
+  const targetDisplay = mainWindow
+    ? screen.getDisplayMatching(mainWindow.getBounds())
+    : screen.getPrimaryDisplay()
+  const workArea = targetDisplay.workArea
+  if (workArea) {
     const bounds = win.getBounds()
     win.setBounds({
-      x: Math.round(display.x + display.width / 2 - bounds.width / 2),
-      y: Math.round(display.y + Math.max(80, display.height * 0.18)),
+      x: Math.round(workArea.x + workArea.width / 2 - bounds.width / 2),
+      y: Math.round(workArea.y + Math.max(96, workArea.height * 0.15)),
       width: bounds.width,
       height: bounds.height
     })
@@ -668,6 +671,14 @@ async function showFloatNoteWindow() {
   win.show()
   win.focus()
   win.webContents.send('float-note:shown')
+}
+
+async function toggleFloatNoteWindow() {
+  if (floatNoteWindow && !floatNoteWindow.isDestroyed() && floatNoteWindow.isVisible()) {
+    hideFloatNoteWindow()
+    return
+  }
+  await showFloatNoteWindow()
 }
 
 function hideFloatNoteWindow() {
@@ -682,7 +693,7 @@ function registerFloatNoteShortcut(shortcut: string) {
 
   const nextShortcut = shortcut.trim() || defaultPreferences.floatNoteShortcut
   const registered = globalShortcut.register(nextShortcut, () => {
-    void showFloatNoteWindow()
+    void toggleFloatNoteWindow()
   })
   if (registered) {
     activeFloatNoteShortcut = nextShortcut
@@ -744,6 +755,11 @@ ipcMain.handle('float-note:show', async () => {
   return true
 })
 
+ipcMain.handle('float-note:toggle', async () => {
+  await toggleFloatNoteWindow()
+  return true
+})
+
 ipcMain.handle('float-note:hide', async () => {
   hideFloatNoteWindow()
   return true
@@ -752,7 +768,7 @@ ipcMain.handle('float-note:hide', async () => {
 ipcMain.handle('float-note:set-height', async (_event, height: number) => {
   if (!floatNoteWindow) return false
   const bounds = floatNoteWindow.getBounds()
-  floatNoteWindow.setBounds({ ...bounds, height: Math.max(126, Math.min(520, Math.round(height))) })
+  floatNoteWindow.setBounds({ ...bounds, height: Math.max(150, Math.min(560, Math.round(height))) })
   return true
 })
 
@@ -886,6 +902,19 @@ ipcMain.handle('quick-notes:create', async (_event, workspacePath: string, conte
   return item
 })
 
+ipcMain.handle('quick-notes:delete', async (_event, workspacePath: string, id: string) => {
+  const filePath = await getQuickNotesFile(workspacePath)
+  const notes = await readQuickNotes(workspacePath)
+  const nextNotes = notes.filter(item => item.id !== id)
+
+  if (nextNotes.length === notes.length) {
+    return false
+  }
+
+  await fs.writeFile(filePath, JSON.stringify(nextNotes, null, 2), 'utf8')
+  return true
+})
+
 ipcMain.handle('miniapps:list', async (_event, workspacePath: string) => {
   return readMiniapps(workspacePath)
 })
@@ -977,10 +1006,10 @@ ipcMain.handle(
   }
 )
 
-ipcMain.handle('miniapp-view:set-bounds', async (_event, bounds: ViewBounds) => {
-  const activeEntry = miniappViews.get(activeMiniappViewKey)
-  if (!activeEntry) return false
-  activeEntry.view.setBounds(normalizeBounds(bounds))
+ipcMain.handle('miniapp-view:set-bounds', async (_event, input: { viewKey: string; bounds: ViewBounds }) => {
+  const entry = miniappViews.get(input.viewKey)
+  if (!entry) return false
+  entry.view.setBounds(normalizeBounds(input.bounds))
   return true
 })
 
