@@ -1,9 +1,5 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
-import { getCurrentWindow } from "@tauri-apps/api/window"
-
-const appWindow = getCurrentWindow()
-
 export function createTauriBridge(): Window["oneMind"] {
   return {
     runtime: {
@@ -11,9 +7,9 @@ export function createTauriBridge(): Window["oneMind"] {
       bridgeReady: true
     },
     window: {
-      minimize: () => appWindow.minimize(),
-      toggleMaximize: () => appWindow.toggleMaximize(),
-      close: () => appWindow.close(),
+      minimize: () => invoke<void>("window_minimize"),
+      toggleMaximize: () => invoke<void>("window_toggle_maximize"),
+      close: () => invoke<void>("window_close"),
       onNavigate: (callback) => {
         let disposed = false
         let unlisten: (() => void) | null = null
@@ -34,7 +30,7 @@ export function createTauriBridge(): Window["oneMind"] {
       show: () => invoke<boolean>("float_note_show"),
       toggle: () => invoke<boolean>("float_note_toggle"),
       hide: () => invoke<boolean>("float_note_hide"),
-      focus: () => appWindow.setFocus().then(() => true),
+      focus: () => invoke<boolean>("float_note_focus"),
       setHeight: (height) => invoke<boolean>("float_note_set_height", { height }),
       openRoute: (route) => invoke<boolean>("float_note_open_route", { route }),
       registerShortcut: (shortcut) => invoke<boolean>("float_note_register_shortcut", { shortcut }),

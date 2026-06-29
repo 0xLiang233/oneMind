@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useOutletContext } from "react-router-dom"
 
 type OutletContext = {
@@ -23,11 +23,11 @@ const defaultPreferences: AppPreferences = {
   floatNoteShortcut: "Alt+Space"
 }
 
-const accentValues: Array<{ value: AppPreferences["accent"]; color: string; label: string }> = [
-  { value: "purple", color: "#A78BFA", label: "紫色" },
-  { value: "blue", color: "#38BDF8", label: "蓝色" },
-  { value: "green", color: "#34D399", label: "绿色" },
-  { value: "orange", color: "#FB923C", label: "橙色" }
+const accentValues: Array<{ value: AppPreferences["accent"]; label: string }> = [
+  { value: "purple", label: "紫色" },
+  { value: "blue", label: "蓝色" },
+  { value: "green", label: "绿色" },
+  { value: "orange", label: "橙色" }
 ]
 
 const navGroups: Array<{ section: string; items: Array<{ key: SettingsGroup; label: string; icon: string }> }> = [
@@ -316,7 +316,7 @@ export function SettingsPage() {
                       type="button"
                       title={accent.label}
                       className={preferences.accent === accent.value ? "settings-swatch active" : "settings-swatch"}
-                      style={{ "--swatch-color": accent.color } as CSSProperties}
+                      data-accent-option={accent.value}
                       onClick={() => void persistPreferences({ ...preferences, accent: accent.value })}
                     />
                   ))}

@@ -1222,6 +1222,34 @@ fn miniapps_delete(workspace_path: String, id: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
+fn window_minimize(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.minimize().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn window_toggle_maximize(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        if window.is_maximized().map_err(|e| e.to_string())? {
+            window.unmaximize().map_err(|e| e.to_string())?;
+        } else {
+            window.maximize().map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn window_close(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn float_note_show(app: AppHandle) -> Result<bool, String> {
     show_float_note_window(&app)
 }
@@ -1239,6 +1267,15 @@ fn float_note_hide(app: AppHandle) -> Result<bool, String> {
         append_debug_log(&app, "float_note_close_done", Some("source=command"));
     }
     Ok(true)
+}
+
+#[tauri::command]
+fn float_note_focus(app: AppHandle) -> Result<bool, String> {
+    if let Some(window) = app.get_webview_window("float-note") {
+        window.set_focus().map_err(|e| e.to_string())?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 #[tauri::command]
@@ -1474,9 +1511,13 @@ pub fn run() {
             miniapps_create,
             miniapps_update,
             miniapps_delete,
+            window_minimize,
+            window_toggle_maximize,
+            window_close,
             float_note_show,
             float_note_toggle,
             float_note_hide,
+            float_note_focus,
             float_note_set_height,
             float_note_open_route,
             float_note_register_shortcut,

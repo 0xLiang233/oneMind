@@ -116,7 +116,7 @@ function FolderIcon() {
   return (
     <span className="tree-folder-icon">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <path d="M1 4V11H13V4H7L5 2H1V4Z" fill="currentColor" opacity="0.7"/>
+        <path d="M1 4V11H13V4H7L5 2H1V4Z" fill="currentColor" opacity="0.62"/>
       </svg>
     </span>
   )
@@ -127,7 +127,7 @@ function FileIcon() {
     <span className="tree-file-icon">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
         <rect x="2" y="1" width="10" height="12" rx="1.5" stroke="currentColor" strokeWidth="1"/>
-        <path d="M5 4H9M5 6.5H9M5 9H7" stroke="currentColor" strokeWidth="0.8" strokeLinecap="round"/>
+        <path d="M5 4H9M5 6.5H9M5 9H7" stroke="currentColor" strokeWidth="0.75" strokeLinecap="round"/>
       </svg>
     </span>
   )
@@ -145,6 +145,9 @@ export function AppShell() {
   const [tabs, setTabs] = useState<Tab[]>([])
   const [activeTabPath, setActiveTabPath] = useState(normalizeRoutePath(location.pathname) + location.search)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [notesSearchExpanded, setNotesSearchExpanded] = useState(false)
+  const [notesSearchQuery, setNotesSearchQuery] = useState("")
+  const notesSearchRef = useRef<HTMLInputElement | null>(null)
   const [noteTree, setNoteTree] = useState<NoteTreeNode[]>([])
   const [selectedSidebarPath, setSelectedSidebarPath] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; targetNode: NoteTreeNode | null } | null>(null)
@@ -245,6 +248,17 @@ export function AppShell() {
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed(prev => !prev)
   }, [])
+
+  const expandNotesSearch = useCallback(() => {
+    setNotesSearchExpanded(true)
+    window.requestAnimationFrame(() => notesSearchRef.current?.focus())
+  }, [])
+
+  const collapseNotesSearchIfEmpty = useCallback(() => {
+    if (!notesSearchQuery.trim()) {
+      setNotesSearchExpanded(false)
+    }
+  }, [notesSearchQuery])
 
   useEffect(() => {
     return window.oneMind.window.onNavigate((route) => {
@@ -574,16 +588,22 @@ export function AppShell() {
   return (
     <div className="app-shell">
       {/* Titlebar */}
-      <header className="titlebar">
-        <div className="titlebar-brand">
+      <header className="titlebar" data-tauri-drag-region>
+        <div className="titlebar-brand" data-tauri-drag-region>
           <div className="brand-mark small">O</div>
           <div className="titlebar-brand-name">ONEMIND</div>
         </div>
-        <div className="titlebar-center">OneMind Workbench</div>
+        <div className="titlebar-center" data-tauri-drag-region>OneMind Workbench</div>
         <div className="titlebar-controls">
-          <button className="titlebar-btn" title="最小化" onClick={() => void window.oneMind.window.minimize()}>─</button>
-          <button className="titlebar-btn" title="最大化" onClick={() => void window.oneMind.window.toggleMaximize()}>□</button>
-          <button className="titlebar-btn titlebar-btn-close" title="关闭" onClick={() => void window.oneMind.window.close()}>×</button>
+          <button className="titlebar-btn" title="最小化" aria-label="最小化" onClick={() => void window.oneMind.window.minimize()}>
+            <span className="titlebar-icon titlebar-icon-minimize" aria-hidden="true" />
+          </button>
+          <button className="titlebar-btn" title="最大化" aria-label="最大化" onClick={() => void window.oneMind.window.toggleMaximize()}>
+            <span className="titlebar-icon titlebar-icon-maximize" aria-hidden="true" />
+          </button>
+          <button className="titlebar-btn titlebar-btn-close" title="关闭" aria-label="关闭" onClick={() => void window.oneMind.window.close()}>
+            <span className="titlebar-icon titlebar-icon-close" aria-hidden="true" />
+          </button>
         </div>
       </header>
 
@@ -605,14 +625,8 @@ export function AppShell() {
 
           {/* Expanded content */}
           <div className="sidebar-expanded-content">
-            {/* Search */}
-            <div className="sidebar-search">
-              <input className="sidebar-search-input" placeholder="搜索笔记..." />
-            </div>
-
             {/* Quick Note Section (fixed) */}
             <div className="sidebar-section sidebar-section--quick-note">
-              <div className="sidebar-section-title">随记</div>
               <button
                 type="button"
                 className={location.pathname === "/capture" ? "nav-item nav-item--quick-note active" : "nav-item nav-item--quick-note"}
@@ -629,7 +643,29 @@ export function AppShell() {
 
             {/* Notes Section (flex: 1) */}
             <div className="sidebar-section sidebar-section--notes">
-              <div className="sidebar-section-title">笔记</div>
+              <div className="sidebar-section-header">
+                <div className="sidebar-section-title">笔记</div>
+                <div className={"sidebar-search sidebar-notes-search" + (notesSearchExpanded || notesSearchQuery ? " expanded" : "")}>
+                  <button
+                    type="button"
+                    className="sidebar-search-trigger"
+                    aria-label="搜索笔记"
+                    title="搜索笔记"
+                    onClick={expandNotesSearch}
+                  >
+                    <span aria-hidden="true" />
+                  </button>
+                  <input
+                    ref={notesSearchRef}
+                    className="sidebar-search-input"
+                    value={notesSearchQuery}
+                    onChange={(event) => setNotesSearchQuery(event.target.value)}
+                    onFocus={() => setNotesSearchExpanded(true)}
+                    onBlur={collapseNotesSearchIfEmpty}
+                    placeholder="搜索笔记..."
+                  />
+                </div>
+              </div>
               {/* File tree */}
               <div
                 className={"sidebar-notes-tree-surface" + (dropTargetPath === "__root__" ? " drop-target" : "")}
@@ -658,7 +694,7 @@ export function AppShell() {
             <div className="sidebar-bottom">
               <button
                 type="button"
-                className={location.pathname === "/sources" ? "nav-item active-secondary" : "nav-item"}
+                className={location.pathname === "/sources" ? "nav-item active" : "nav-item"}
                 onClick={() => openRoute("/sources")}
               >
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none" style={{ flexShrink: 0 }}>
