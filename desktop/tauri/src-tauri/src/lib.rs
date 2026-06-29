@@ -18,7 +18,8 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus as SetWin32Focus;
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, SetForegroundWindow, ShowWindow, SW_SHOW,
+    BringWindowToTop, GetWindowLongW, SetForegroundWindow, SetWindowLongW, ShowWindow, GWL_STYLE,
+    SW_SHOW, WS_SYSMENU,
 };
 
 #[derive(Serialize)]
@@ -435,11 +436,54 @@ fn normalize_timestamp(value: String) -> String {
 }
 
 fn normalize_miniapp_source(item: MiniappSource) -> MiniappSource {
+    let fallback_icon = resolve_miniapp_icon_url(&item.url);
     MiniappSource {
         created_at: normalize_timestamp(item.created_at),
+        icon: item.icon.or(fallback_icon),
         ..item
     }
 }
+
+fn resolve_miniapp_icon_url(url: &str) -> Option<String> {
+    let without_scheme = url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(url)
+        .trim();
+    let host = without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('/');
+    if host.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "https://www.google.com/s2/favicons?domain={host}&sz=64"
+    ))
+}
+
+#[cfg(windows)]
+fn disable_windows_system_menu(window: &WebviewWindow) {
+    match window.hwnd() {
+        Ok(hwnd) => unsafe {
+            let style = GetWindowLongW(hwnd, GWL_STYLE);
+            let next_style = style & !(WS_SYSMENU.0 as i32);
+            let _ = SetWindowLongW(hwnd, GWL_STYLE, next_style);
+        },
+        Err(err) => {
+            append_debug_log(
+                &window.app_handle(),
+                "windows_system_menu_disable_failed",
+                Some(&err.to_string()),
+            );
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn disable_windows_system_menu(_window: &WebviewWindow) {}
 
 fn ensure_float_note_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     if let Some(window) = app.get_webview_window("float-note") {
@@ -1167,8 +1211,8 @@ fn miniapps_create(workspace_path: String, input: MiniappInput) -> Result<Miniap
     let item = MiniappSource {
         id: format!("miniapp-{}", now_id()),
         name: input.name,
+        icon: resolve_miniapp_icon_url(&input.url),
         url: input.url,
-        icon: None,
         created_at: now_iso_like(),
     };
     miniapps.push(item.clone());
@@ -1193,7 +1237,7 @@ fn miniapps_update(
         if item.id == id {
             item.name = input.name.clone();
             item.url = input.url.clone();
-            item.icon = None;
+            item.icon = resolve_miniapp_icon_url(&input.url);
             updated = Some(item.clone());
             break;
         }
@@ -1456,6 +1500,7 @@ pub fn run() {
             append_boot_log_line(app.handle(), "tauri_setup_entered");
             if let Some(main_window) = app.get_webview_window("main") {
                 append_boot_log_line(app.handle(), "main_window_exists_from_config");
+                disable_windows_system_menu(&main_window);
                 let app_handle = app.handle().clone();
                 main_window.on_window_event(move |event| {
                     if matches!(event, WindowEvent::CloseRequested { .. }) {

@@ -249,6 +249,11 @@ export function AppShell() {
     setSidebarCollapsed(prev => !prev)
   }, [])
 
+  const handleTabsWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
+    event.currentTarget.scrollLeft += event.deltaY
+  }, [])
+
   const expandNotesSearch = useCallback(() => {
     setNotesSearchExpanded(true)
     window.requestAnimationFrame(() => notesSearchRef.current?.focus())
@@ -586,14 +591,65 @@ export function AppShell() {
   }
 
   return (
-    <div className="app-shell">
-      {/* Titlebar */}
-      <header className="titlebar" data-tauri-drag-region>
-        <div className="titlebar-brand" data-tauri-drag-region>
-          <div className="brand-mark small">O</div>
-          <div className="titlebar-brand-name">ONEMIND</div>
+    <div className={"app-shell" + (sidebarCollapsed ? " sidebar-collapsed" : "")}>
+      <header className="app-chrome" data-tauri-drag-region>
+        <div className="chrome-brand" data-tauri-drag-region>
+          <div className="chrome-brand-identity" aria-hidden="true" data-tauri-drag-region>
+            <span className="brand-mark small">O</span>
+            <span className="titlebar-brand-name">ONEMIND</span>
+          </div>
+          <button
+            type="button"
+            className="chrome-sidebar-toggle"
+            onClick={toggleSidebar}
+            aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+            title={sidebarCollapsed ? "展开侧边栏 (Ctrl+\\)" : "收起侧边栏 (Ctrl+\\)"}
+          >
+            <span className="chrome-sidebar-icon" aria-hidden="true">
+              <svg className="chrome-sidebar-chevron" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M8 2L4 7L8 12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M10 2L6 7L10 12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" transform="translate(-2,0)"/>
+              </svg>
+            </span>
+          </button>
         </div>
-        <div className="titlebar-center" data-tauri-drag-region>OneMind Workbench</div>
+        <div className="chrome-tabs" onWheel={handleTabsWheel}>
+          <button
+            type="button"
+            className={activeTabPath === "/home" ? "tab-item active" : "tab-item"}
+            onClick={() => openRoute("/home")}
+          >
+            首页
+          </button>
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              type="button"
+              className={tab.path === activeTabPath ? "tab-item active" : "tab-item"}
+              onClick={() => openRoute(tab.path)}
+            >
+              <span className="tab-item-label">
+                {tab.label}
+              </span>
+              <span
+                role="button"
+                tabIndex={0}
+                className="tab-item-close"
+                onClick={(e) => { e.stopPropagation(); closeTab(tab.path); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    closeTab(tab.path)
+                  }
+                }}
+              >
+                ×
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="chrome-drag-region" data-tauri-drag-region />
         <div className="titlebar-controls">
           <button className="titlebar-btn" title="最小化" aria-label="最小化" onClick={() => void window.oneMind.window.minimize()}>
             <span className="titlebar-icon titlebar-icon-minimize" aria-hidden="true" />
@@ -610,19 +666,6 @@ export function AppShell() {
       <div className={"workspace-layout" + (sidebarCollapsed ? " sidebar-collapsed" : "")}>
         {/* Sidebar */}
         <aside className="sidebar" id="sidebar">
-          {/* Collapse button */}
-          <button
-            className={"sidebar-collapse-btn" + (sidebarCollapsed ? " collapsed" : "")}
-            onClick={toggleSidebar}
-            aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
-            title={sidebarCollapsed ? "展开侧边栏 (Ctrl+\\)" : "收起侧边栏 (Ctrl+\\)"}
-          >
-            <svg className="sidebar-collapse-chevron" width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M8 2L4 7L8 12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M10 2L6 7L10 12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" transform="translate(-2,0)"/>
-            </svg>
-          </button>
-
           {/* Expanded content */}
           <div className="sidebar-expanded-content">
             {/* Quick Note Section (fixed) */}
@@ -745,44 +788,6 @@ export function AppShell() {
 
         {/* Content */}
         <main className="content">
-          {/* Tab Bar */}
-          <div className="tab-bar">
-            <button
-              type="button"
-              className={activeTabPath === "/home" ? "tab-item active" : "tab-item"}
-              onClick={() => openRoute("/home")}
-            >
-              首页
-            </button>
-            {tabs.map(tab => (
-              <button
-                key={tab.id}
-                type="button"
-                className={tab.path === activeTabPath ? "tab-item active" : "tab-item"}
-                onClick={() => openRoute(tab.path)}
-              >
-                <span className="tab-item-label">
-                  {tab.label}
-                </span>
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className="tab-item-close"
-                  onClick={(e) => { e.stopPropagation(); closeTab(tab.path); }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      closeTab(tab.path)
-                    }
-                  }}
-                >
-                  ×
-                </span>
-              </button>
-            ))}
-          </div>
-
           <section className="content-panel">
             <Outlet context={{ workspace, defaultPath, busy, bridgeReady, handleCreateDefault, handleSelectWorkspace, selectedSidebarPath, setSelectedSidebarPath }} />
           </section>

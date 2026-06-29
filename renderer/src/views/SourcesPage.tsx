@@ -112,6 +112,14 @@ export function SourcesPage() {
     navigate(`/sources?${nextParams.toString()}`)
   }
 
+  function getSourceDomain(url: string) {
+    try {
+      return new URL(url).hostname.replace(/^www\./, '')
+    } catch {
+      return url.replace(/^https?:\/\//, '').split('/')[0]
+    }
+  }
+
   function renderMiniappIcon(item: MiniappSource) {
     if (item.icon && !failedIcons[item.id]) {
       return (
@@ -140,7 +148,10 @@ export function SourcesPage() {
                 onClick={() => openSource(item)}
               >
                 <div className="miniapp-app-icon">{renderMiniappIcon(item)}</div>
-                <div className="miniapp-app-name">{item.name}</div>
+                <div className="miniapp-app-meta">
+                  <div className="miniapp-app-name">{item.name}</div>
+                  <div className="miniapp-app-domain">{getSourceDomain(item.url)}</div>
+                </div>
               </button>
             ))}
           </div>

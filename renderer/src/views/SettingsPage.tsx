@@ -62,12 +62,11 @@ function applyPreferences(preferences: AppPreferences) {
   root.style.setProperty("--md-editor-font-size", `${preferences.editorFontSize}px`)
 }
 
-function keyEventToAccelerator(event: React.KeyboardEvent) {
-  const parts: string[] = []
-  if (event.ctrlKey || event.metaKey) parts.push("CommandOrControl")
-  if (event.altKey) parts.push("Alt")
-  if (event.shiftKey) parts.push("Shift")
+type ShortcutKeyEvent = Pick<KeyboardEvent | React.KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey"> & {
+  code?: string
+}
 
+function normalizeShortcutKey(event: ShortcutKeyEvent) {
   const keyMap: Record<string, string> = {
     " ": "Space",
     ArrowUp: "Up",
@@ -80,12 +79,37 @@ function keyEventToAccelerator(event: React.KeyboardEvent) {
     Delete: "Delete",
     Tab: "Tab"
   }
-  const key = keyMap[event.key] ?? event.key.toUpperCase()
 
-  if (["CONTROL", "CTRL", "META", "ALT", "SHIFT"].includes(key)) return ""
+  if (event.code === "Space") return "Space"
+  return keyMap[event.key] ?? event.key.toUpperCase()
+}
+
+function shortcutEventToParts(event: ShortcutKeyEvent, options: { display?: boolean } = {}) {
+  const parts: string[] = []
+  if (event.ctrlKey) parts.push(options.display ? "Ctrl" : "CommandOrControl")
+  if (event.metaKey) parts.push(options.display ? "Win" : "Super")
+  if (event.altKey) parts.push("Alt")
+  if (event.shiftKey) parts.push("Shift")
+
+  const key = normalizeShortcutKey(event)
+  if (!["CONTROL", "CTRL", "META", "ALT", "SHIFT", "OS", "WIN", "SUPER"].includes(key)) {
+    parts.push(key)
+  }
+
+  return parts
+}
+
+function keyEventToAccelerator(event: ShortcutKeyEvent) {
+  const parts = shortcutEventToParts(event)
+  const key = parts[parts.length - 1] ?? ""
+  if (!key || ["CommandOrControl", "Super", "Alt", "Shift"].includes(key)) return ""
   if (!parts.length && key.length === 1) return ""
 
-  return [...parts, key].join("+")
+  return parts.join("+")
+}
+
+function keyEventToDisplayShortcut(event: ShortcutKeyEvent) {
+  return shortcutEventToParts(event, { display: true }).join("+")
 }
 
 export function SettingsPage() {
@@ -98,10 +122,12 @@ export function SettingsPage() {
   const [draft, setDraft] = useState({ name: "", url: "" })
   const [editingId, setEditingId] = useState<string | null>(null)
   const [recordingShortcut, setRecordingShortcut] = useState(false)
+  const [recordingShortcutPreview, setRecordingShortcutPreview] = useState("")
   const [status, setStatus] = useState("")
   const statusTimerRef = useRef<number | null>(null)
   const savedShortcutRef = useRef(defaultPreferences.floatNoteShortcut)
   const shortcutButtonRef = useRef<HTMLButtonElement | null>(null)
+  const pendingShortcutRef = useRef("")
 
   const workspacePath = workspace?.workspacePath ?? ""
 
@@ -171,22 +197,84 @@ export function SettingsPage() {
     await persistPreferences({ ...preferences, floatNoteShortcut: nextShortcut })
   }
 
-  async function handleShortcutKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
-    event.preventDefault()
-    event.stopPropagation()
+  function cancelShortcutRecording() {
+    pendingShortcutRef.current = ""
+    setRecordingShortcut(false)
+    setRecordingShortcutPreview("")
+    setStatus("")
+  }
 
-    if (event.key === "Escape") {
-      setRecordingShortcut(false)
+  function previewShortcutFromEvent(event: ShortcutKeyEvent) {
+    const preview = keyEventToDisplayShortcut(event)
+    if (preview) setRecordingShortcutPreview(preview)
+
+    if (normalizeShortcutKey(event) === "Esc") {
+      cancelShortcutRecording()
       return
     }
 
     const shortcut = keyEventToAccelerator(event)
-    if (!shortcut) return
+    if (shortcut) pendingShortcutRef.current = shortcut
+  }
 
+  async function finishShortcutRecording() {
+    const shortcut = pendingShortcutRef.current
+    pendingShortcutRef.current = ""
     setRecordingShortcut(false)
+    setRecordingShortcutPreview("")
+
+    if (!shortcut) {
+      setStatus("快捷键未变更。")
+      return
+    }
+
     setPreferences((current) => ({ ...current, floatNoteShortcut: shortcut }))
     await persistShortcut(shortcut)
   }
+
+  async function handleShortcutKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (normalizeShortcutKey(event) === "Enter") {
+      await finishShortcutRecording()
+      return
+    }
+    previewShortcutFromEvent(event)
+  }
+
+  useEffect(() => {
+    if (!recordingShortcut) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      if (normalizeShortcutKey(event) === "Enter") {
+        void finishShortcutRecording()
+        return
+      }
+      previewShortcutFromEvent(event)
+    }
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      previewShortcutFromEvent(event)
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (shortcutButtonRef.current?.contains(event.target as Node)) return
+      void finishShortcutRecording()
+    }
+
+    window.addEventListener("keydown", handleKeyDown, true)
+    window.addEventListener("keyup", handleKeyUp, true)
+    window.addEventListener("pointerdown", handlePointerDown, true)
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, true)
+      window.removeEventListener("keyup", handleKeyUp, true)
+      window.removeEventListener("pointerdown", handlePointerDown, true)
+    }
+  }, [recordingShortcut, preferences])
 
   async function handleAddMiniapp() {
     if (!workspacePath) return
@@ -397,14 +485,14 @@ export function SettingsPage() {
                   className={recordingShortcut ? "settings-shortcut-recorder recording" : "settings-shortcut-recorder"}
                   onClick={() => {
                     setRecordingShortcut(true)
+                    setRecordingShortcutPreview("")
                     setStatus("请按下新的快捷键组合。")
                     window.setTimeout(() => shortcutButtonRef.current?.focus(), 0)
                   }}
                   ref={shortcutButtonRef}
-                  onBlur={() => setRecordingShortcut(false)}
                   onKeyDown={(event) => void handleShortcutKeyDown(event)}
                 >
-                  {recordingShortcut ? "按下快捷键..." : preferences.floatNoteShortcut}
+                  {recordingShortcut ? recordingShortcutPreview || "按下快捷键..." : preferences.floatNoteShortcut}
                 </button>
               </div>
 
