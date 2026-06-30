@@ -21,7 +21,7 @@ use tauri::{
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 #[cfg(windows)]
-use windows::Win32::Foundation::MAX_PATH;
+use windows::Win32::Foundation::{LPARAM, MAX_PATH, WPARAM};
 #[cfg(windows)]
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC, SelectObject,
@@ -40,8 +40,8 @@ use windows::Win32::UI::Shell::{
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, DestroyIcon, DrawIconEx, GetWindowLongW, SetForegroundWindow,
-    SetWindowLongW, ShowWindow, DI_NORMAL, GWL_STYLE, SW_SHOW, WS_SYSMENU,
+    BringWindowToTop, DestroyIcon, DrawIconEx, IsZoomed, PostMessageW, SetForegroundWindow,
+    ShowWindow, DI_NORMAL, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, WM_CLOSE,
 };
 
 #[derive(Serialize)]
@@ -741,14 +741,6 @@ fn read_note_tree(dir_path: &Path, root_path: &Path) -> Result<Vec<NoteTreeNode>
         .filter_map(Result::ok)
         .collect::<Vec<_>>();
 
-    entries.retain(|entry| {
-        entry.path().is_dir()
-            || entry
-                .path()
-                .extension()
-                .and_then(|value| value.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-    });
     entries.sort_by(|a, b| {
         let a_is_dir = a.path().is_dir();
         let b_is_dir = b.path().is_dir();
@@ -932,27 +924,6 @@ fn resolve_miniapp_icon_url(url: &str) -> Option<String> {
     ))
 }
 
-#[cfg(windows)]
-fn disable_windows_system_menu(window: &WebviewWindow) {
-    match window.hwnd() {
-        Ok(hwnd) => unsafe {
-            let style = GetWindowLongW(hwnd, GWL_STYLE);
-            let next_style = style & !(WS_SYSMENU.0 as i32);
-            let _ = SetWindowLongW(hwnd, GWL_STYLE, next_style);
-        },
-        Err(err) => {
-            append_debug_log(
-                &window.app_handle(),
-                "windows_system_menu_disable_failed",
-                Some(&err.to_string()),
-            );
-        }
-    }
-}
-
-#[cfg(not(windows))]
-fn disable_windows_system_menu(_window: &WebviewWindow) {}
-
 fn ensure_float_note_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     if let Some(window) = app.get_webview_window("float-note") {
         append_debug_log(app, "float_note_window_reuse", None);
@@ -1070,34 +1041,139 @@ fn activate_float_note_window_native(app: &AppHandle, window: &WebviewWindow, so
 #[cfg(not(windows))]
 fn activate_float_note_window_native(_app: &AppHandle, _window: &WebviewWindow, _source: &str) {}
 
+#[cfg(windows)]
+fn minimize_window_native(window: &WebviewWindow) -> bool {
+    window
+        .hwnd()
+        .map(|hwnd| unsafe { ShowWindow(hwnd, SW_MINIMIZE).as_bool() })
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn minimize_window_native(_window: &WebviewWindow) -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn toggle_maximize_window_native(window: &WebviewWindow) -> bool {
+    window
+        .hwnd()
+        .map(|hwnd| unsafe {
+            if IsZoomed(hwnd).as_bool() {
+                ShowWindow(hwnd, SW_RESTORE).as_bool()
+            } else {
+                ShowWindow(hwnd, SW_MAXIMIZE).as_bool()
+            }
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn toggle_maximize_window_native(_window: &WebviewWindow) -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn close_window_native(window: &WebviewWindow) -> bool {
+    window
+        .hwnd()
+        .map(|hwnd| unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)).is_ok() })
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn close_window_native(_window: &WebviewWindow) -> bool {
+    false
+}
+
+const FLOAT_NOTE_WIDTH: f64 = 724.0;
+const FLOAT_NOTE_MIN_HEIGHT: f64 = 150.0;
+
+fn position_float_note_window(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    height: f64,
+    prefer_cursor_monitor: bool,
+    source: &str,
+) {
+    let monitor = if prefer_cursor_monitor {
+        app.cursor_position()
+            .ok()
+            .and_then(|cursor| app.monitor_from_point(cursor.x, cursor.y).ok().flatten())
+            .or_else(|| window.current_monitor().ok().flatten())
+    } else {
+        window.current_monitor().ok().flatten()
+    };
+
+    if let Some(monitor) = monitor {
+        let area = monitor.work_area();
+        let area_pos = area.position;
+        let area_size = area.size;
+        let scale = monitor.scale_factor();
+        let area_x = area_pos.x as f64 / scale;
+        let area_y = area_pos.y as f64 / scale;
+        let area_width = area_size.width as f64 / scale;
+        let area_height = area_size.height as f64 / scale;
+        let next_height = height.max(FLOAT_NOTE_MIN_HEIGHT);
+        let x = area_x + (area_width / 2.0) - (FLOAT_NOTE_WIDTH / 2.0);
+        let center_y = area_y + (area_height / 3.0);
+        let y = (center_y - (next_height / 2.0)).max(area_y + 24.0);
+        let _ = window.set_position(LogicalPosition::new(x.round(), y.round()));
+        append_debug_log(
+            app,
+            "float_note_positioned",
+            Some(&format!(
+                "source={source} monitor={}x{}@{},{} scale={} x={} y={} height={}",
+                area_size.width,
+                area_size.height,
+                area_pos.x,
+                area_pos.y,
+                scale,
+                x.round(),
+                y.round(),
+                next_height
+            )),
+        );
+        return;
+    }
+
+    if let Some(main) = app.get_webview_window("main") {
+        if let Ok(main_pos) = main.outer_position() {
+            if let Ok(main_size) = main.outer_size() {
+                let next_height = height.max(FLOAT_NOTE_MIN_HEIGHT);
+                let x =
+                    main_pos.x as f64 + (main_size.width as f64 / 2.0) - (FLOAT_NOTE_WIDTH / 2.0);
+                let center_y = main_pos.y as f64 + (main_size.height as f64 / 3.0);
+                let y = center_y - (next_height / 2.0);
+                let _ = window.set_position(LogicalPosition::new(x.round(), y.round()));
+                append_debug_log(
+                    app,
+                    "float_note_positioned",
+                    Some(&format!(
+                        "source={source} fallback=main x={} y={} height={}",
+                        x.round(),
+                        y.round(),
+                        next_height
+                    )),
+                );
+                return;
+            }
+        }
+    }
+
+    let _ = window.center();
+    append_debug_log(
+        app,
+        "float_note_positioned",
+        Some(&format!("source={source} fallback=center")),
+    );
+}
+
 fn show_float_note_window(app: &AppHandle) -> Result<bool, String> {
     append_debug_log(app, "float_note_show_start", None);
     let window = ensure_float_note_window(app)?;
-    let _ = window.set_size(LogicalSize::new(724.0, 150.0));
-    if let Some(main) = app.get_webview_window("main") {
-        let monitor = main.current_monitor().ok().flatten();
-        if let Some(monitor) = monitor {
-            let area = monitor.work_area();
-            let area_pos = area.position;
-            let area_size = area.size;
-            let scale = monitor.scale_factor();
-            let width = 724.0;
-            let x =
-                area_pos.x as f64 / scale + (area_size.width as f64 / scale / 2.0) - (width / 2.0);
-            let y =
-                area_pos.y as f64 / scale + ((area_size.height as f64 / scale * 0.15).max(96.0));
-            let _ = window.set_position(LogicalPosition::new(x.round(), y.round()));
-        } else if let Ok(main_pos) = main.outer_position() {
-            if let Ok(main_size) = main.outer_size() {
-                let width = 724.0;
-                let x = main_pos.x as f64 + (main_size.width as f64 / 2.0) - (width / 2.0);
-                let y = main_pos.y as f64 + ((main_size.height as f64 * 0.15).max(96.0));
-                let _ = window.set_position(LogicalPosition::new(x.round(), y.round()));
-            }
-        }
-    } else {
-        let _ = window.center();
-    }
+    let _ = window.set_size(LogicalSize::new(FLOAT_NOTE_WIDTH, FLOAT_NOTE_MIN_HEIGHT));
+    position_float_note_window(app, &window, FLOAT_NOTE_MIN_HEIGHT, true, "show");
 
     let _ = window.unminimize();
     window.show().map_err(|e| e.to_string())?;
@@ -1554,8 +1630,19 @@ fn workspace_select(window: WebviewWindow) -> Result<Option<WorkspaceMeta>, Stri
 #[tauri::command]
 fn notes_list(workspace_path: String) -> Result<Vec<NoteTreeNode>, String> {
     let notes_path = Path::new(&workspace_path).join("notes");
+    let assets_path = Path::new(&workspace_path).join("assets");
     fs::create_dir_all(&notes_path).map_err(|e| e.to_string())?;
-    read_note_tree(&notes_path, &notes_path)
+    fs::create_dir_all(&assets_path).map_err(|e| e.to_string())?;
+
+    let mut nodes = read_note_tree(&notes_path, &notes_path)?;
+    nodes.push(NoteTreeNode {
+        id: "__assets__".to_string(),
+        name: "assets".to_string(),
+        path: path_to_string(&assets_path),
+        node_type: "directory".to_string(),
+        children: Some(read_note_tree(&assets_path, &assets_path)?),
+    });
+    Ok(nodes)
 }
 
 #[tauri::command]
@@ -1708,6 +1795,116 @@ fn notes_delete(target_path: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
+fn notes_open_file(target_path: String, workspace_path: Option<String>) -> Result<bool, String> {
+    let target = PathBuf::from(target_path);
+    validate_workspace_content_path(&target, workspace_path.as_deref())?;
+    open_path_in_system(&target)?;
+    Ok(true)
+}
+
+#[tauri::command]
+fn notes_open_containing_folder(
+    target_path: String,
+    workspace_path: Option<String>,
+) -> Result<bool, String> {
+    let target = PathBuf::from(target_path);
+    validate_workspace_content_path(&target, workspace_path.as_deref())?;
+    let folder = if target.is_dir() {
+        target
+    } else {
+        target
+            .parent()
+            .ok_or_else(|| "target has no parent directory".to_string())?
+            .to_path_buf()
+    };
+
+    open_path_in_system(&folder)?;
+    Ok(true)
+}
+
+#[tauri::command]
+fn files_read_data_url(target_path: String, workspace_path: Option<String>) -> Result<String, String> {
+    let target = PathBuf::from(target_path);
+    validate_workspace_content_path(&target, workspace_path.as_deref())?;
+    if !target.is_file() {
+        return Err("target path is not a file".to_string());
+    }
+    let bytes = fs::read(&target).map_err(|e| e.to_string())?;
+    let mime = mime_type_for_path(&target);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(format!("data:{mime};base64,{encoded}"))
+}
+
+fn mime_type_for_path(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("svg") => "image/svg+xml",
+        Some("avif") => "image/avif",
+        _ => "application/octet-stream",
+    }
+}
+
+fn validate_workspace_content_path(target: &Path, workspace_path: Option<&str>) -> Result<(), String> {
+    let Some(workspace_path) = workspace_path else {
+        return Ok(());
+    };
+    let workspace_path = Path::new(workspace_path);
+    let notes_path = workspace_path.join("notes");
+    let assets_path = workspace_path.join("assets");
+    let resolved_target = fs::canonicalize(target).map_err(|e| e.to_string())?;
+    let resolved_notes = fs::canonicalize(&notes_path).map_err(|e| e.to_string())?;
+    let resolved_assets = fs::canonicalize(&assets_path).map_err(|e| e.to_string())?;
+
+    if resolved_target.starts_with(&resolved_notes) || resolved_target.starts_with(&resolved_assets)
+    {
+        return Ok(());
+    }
+
+    Err("Target is outside notes and assets workspace.".to_string())
+}
+
+fn open_path_in_system(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err("target path does not exist".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("explorer");
+        command.arg(path);
+        command
+    };
+
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(path);
+        command
+    };
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(path);
+        command
+    };
+
+    command
+        .spawn()
+        .map_err(|e| format!("failed to open path: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 fn quick_notes_list(workspace_path: String) -> Result<Vec<QuickNote>, String> {
     read_quick_notes_file(&workspace_path)
 }
@@ -1842,6 +2039,9 @@ fn miniapps_delete(workspace_path: String, id: String) -> Result<bool, String> {
 #[tauri::command]
 fn window_minimize(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
+        if minimize_window_native(&window) {
+            return Ok(());
+        }
         window.minimize().map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -1850,6 +2050,9 @@ fn window_minimize(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn window_toggle_maximize(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
+        if toggle_maximize_window_native(&window) {
+            return Ok(());
+        }
         if window.is_maximized().map_err(|e| e.to_string())? {
             window.unmaximize().map_err(|e| e.to_string())?;
         } else {
@@ -1862,6 +2065,9 @@ fn window_toggle_maximize(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn window_close(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
+        if close_window_native(&window) {
+            return Ok(());
+        }
         window.close().map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -1901,8 +2107,9 @@ fn float_note_set_height(app: AppHandle, height: u32) -> Result<bool, String> {
     let window = ensure_float_note_window(&app)?;
     let next_height = height.clamp(150, 560);
     window
-        .set_size(LogicalSize::new(724.0, next_height as f64))
+        .set_size(LogicalSize::new(FLOAT_NOTE_WIDTH, next_height as f64))
         .map_err(|e| e.to_string())?;
+    position_float_note_window(&app, &window, next_height as f64, false, "set_height");
     Ok(true)
 }
 
@@ -2171,7 +2378,6 @@ pub fn run() {
             append_boot_log_line(app.handle(), "tauri_setup_entered");
             if let Some(main_window) = app.get_webview_window("main") {
                 append_boot_log_line(app.handle(), "main_window_exists_from_config");
-                disable_windows_system_menu(&main_window);
                 let app_handle = app.handle().clone();
                 main_window.on_window_event(move |event| {
                     if matches!(event, WindowEvent::CloseRequested { .. }) {
@@ -2218,6 +2424,9 @@ pub fn run() {
             notes_rename,
             notes_move,
             notes_delete,
+            notes_open_file,
+            notes_open_containing_folder,
+            files_read_data_url,
             quick_notes_list,
             quick_notes_create,
             quick_notes_delete,

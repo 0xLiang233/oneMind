@@ -61,6 +61,55 @@ ipcMain.handle("notes:delete", async (_event, targetPath: string) => {
   return true
 })
 
+function ensureWorkspaceContentPath(targetPath: string, workspacePath?: string) {
+  if (!workspacePath) return
+  const resolvedTarget = path.resolve(targetPath)
+  const notesPath = path.resolve(workspacePath, 'notes')
+  const assetsPath = path.resolve(workspacePath, 'assets')
+  const inNotes = resolvedTarget === notesPath || resolvedTarget.startsWith(notesPath + path.sep)
+  const inAssets = resolvedTarget === assetsPath || resolvedTarget.startsWith(assetsPath + path.sep)
+  if (!inNotes && !inAssets) {
+    throw new Error('Target is outside notes and assets workspace.')
+  }
+}
+
+ipcMain.handle("notes:open-file", async (_event, targetPath: string, workspacePath?: string) => {
+  ensureWorkspaceContentPath(targetPath, workspacePath)
+  const error = await shell.openPath(targetPath)
+  if (error) throw new Error(error)
+  return true
+})
+
+ipcMain.handle("notes:open-containing-folder", async (_event, targetPath: string, workspacePath?: string) => {
+  const stat = await fs.stat(targetPath)
+  const folder = stat.isDirectory() ? targetPath : path.dirname(targetPath)
+  ensureWorkspaceContentPath(folder, workspacePath)
+
+  const error = await shell.openPath(folder)
+  if (error) throw new Error(error)
+  return true
+})
+
+function mimeTypeForPath(targetPath: string) {
+  switch (path.extname(targetPath).toLowerCase()) {
+    case '.png': return 'image/png'
+    case '.jpg':
+    case '.jpeg': return 'image/jpeg'
+    case '.gif': return 'image/gif'
+    case '.webp': return 'image/webp'
+    case '.bmp': return 'image/bmp'
+    case '.svg': return 'image/svg+xml'
+    case '.avif': return 'image/avif'
+    default: return 'application/octet-stream'
+  }
+}
+
+ipcMain.handle("files:read-data-url", async (_event, targetPath: string, workspacePath?: string) => {
+  ensureWorkspaceContentPath(targetPath, workspacePath)
+  const buffer = await fs.readFile(targetPath)
+  return `data:${mimeTypeForPath(targetPath)};base64,${buffer.toString('base64')}`
+})
+
 
 type NoteTreeNode = {
   id: string
@@ -329,7 +378,6 @@ async function readNoteTree(dirPath: string, rootPath: string): Promise<NoteTree
   const entries = await fs.readdir(dirPath, { withFileTypes: true })
   const nodes = await Promise.all(
     entries
-      .filter((entry) => entry.isDirectory() || entry.name.toLowerCase().endsWith('.md'))
       .sort((a, b) => {
         if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1
         return a.name.localeCompare(b.name)
@@ -809,8 +857,18 @@ ipcMain.handle('workspace:init-default', async () => {
 
 ipcMain.handle('notes:list', async (_event, workspacePath: string) => {
   const notesPath = path.join(workspacePath, 'notes')
+  const assetsPath = path.join(workspacePath, 'assets')
   await fs.mkdir(notesPath, { recursive: true })
-  return readNoteTree(notesPath, notesPath)
+  await fs.mkdir(assetsPath, { recursive: true })
+  const nodes = await readNoteTree(notesPath, notesPath)
+  nodes.push({
+    id: '__assets__',
+    name: 'assets',
+    path: assetsPath,
+    type: 'directory' as const,
+    children: await readNoteTree(assetsPath, assetsPath)
+  })
+  return nodes
 })
 
 ipcMain.handle('notes:list-directories', async (_event, workspacePath: string) => {

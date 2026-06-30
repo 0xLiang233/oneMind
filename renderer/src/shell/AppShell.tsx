@@ -37,6 +37,7 @@ async function activateShellPreferences(preferences: AppPreferences) {
 const routeLabels: Record<string, string> = {
   "/home": "首页",
   "/capture": "随记",
+  "/file-viewer": "文件",
   "/notes": "笔记",
   "/sources": "小程序",
   "/settings": "设置",
@@ -140,6 +141,52 @@ function FileIcon() {
   )
 }
 
+function ImageFileIcon() {
+  return (
+    <span className="tree-file-icon">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <rect x="1.8" y="2.2" width="10.4" height="9.6" rx="1.6" stroke="currentColor" strokeWidth="1.05"/>
+        <path d="M3.5 9.8L5.8 7.1L7.4 8.8L8.7 7.4L11 9.8" stroke="currentColor" strokeWidth="1.05" strokeLinecap="round" strokeLinejoin="round"/>
+        <circle cx="9.6" cy="4.7" r="1" fill="currentColor" opacity="0.72"/>
+      </svg>
+    </span>
+  )
+}
+
+function isMarkdownPath(path: string) {
+  return path.toLowerCase().endsWith(".md")
+}
+
+const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".avif"])
+
+function getFileName(path: string) {
+  return path.split(/[/\\]/).pop() || path
+}
+
+function isImagePath(path: string) {
+  const name = getFileName(path)
+  const index = name.lastIndexOf(".")
+  return index >= 0 && imageExtensions.has(name.slice(index).toLowerCase())
+}
+
+function getTabLabel(pathname: string, search: string) {
+  const params = new URLSearchParams(search)
+  const routeTitle = params.get("title")
+  if (routeTitle) return routeTitle
+
+  if (pathname === "/notes") {
+    const selectedPath = params.get("selected")
+    if (selectedPath) return getFileName(selectedPath)
+  }
+
+  if (pathname === "/file-viewer") {
+    const filePath = params.get("path")
+    if (filePath) return getFileName(filePath)
+  }
+
+  return routeLabels[pathname] || "页面"
+}
+
 export function AppShell() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -168,6 +215,9 @@ export function AppShell() {
   const [directoryList, setDirectoryList] = useState<string[]>([])
   const [draggingNode, setDraggingNode] = useState<NoteTreeNode | null>(null)
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null)
+  const activeFilePath = location.pathname === "/file-viewer"
+    ? new URLSearchParams(location.search).get("path")
+    : null
 
   // Bridge init + auto-init default workspace
   useEffect(() => {
@@ -324,11 +374,10 @@ export function AppShell() {
     setTabs(prev => {
       const cleaned = prev.filter(tab => normalizeRoutePath(tab.path.split("?")[0]) !== "/home")
       const exists = cleaned.find(t => t.path === currentRoutePath)
-      if (exists) return cleaned
-      const params = new URLSearchParams(location.search)
-      const label = normalizedPathname === "/sources" && params.get("title")
-        ? params.get("title")!
-        : routeLabels[normalizedPathname] ?? "页面"
+      const label = getTabLabel(normalizedPathname, location.search)
+      if (exists) {
+        return cleaned.map(tab => tab.path === currentRoutePath ? { ...tab, label } : tab)
+      }
       return [...cleaned, { id: currentRoutePath, path: currentRoutePath, label }]
     })
   }, [currentRoutePath, location.pathname, location.search])
@@ -342,6 +391,28 @@ export function AppShell() {
     navigate("/notes?selected=" + encodeURIComponent(filePath))
   }
 
+  async function openTreeFile(filePath: string) {
+    if (isMarkdownPath(filePath)) {
+      openNoteFile(filePath)
+      return
+    }
+    if (isImagePath(filePath) && workspace) {
+      const params = new URLSearchParams({
+        path: filePath,
+        workspace: workspace.workspacePath,
+        title: getFileName(filePath)
+      })
+      navigate("/file-viewer?" + params.toString())
+      return
+    }
+    if (!workspace) return
+    try {
+      await window.oneMind.notes.openFile(filePath, workspace.workspacePath)
+    } catch (error) {
+      console.error("Open file failed:", error)
+    }
+  }
+
   function getRelativeNoteDir(dirPath: string) {
     if (!workspace) return ""
     return dirPath
@@ -353,9 +424,19 @@ export function AppShell() {
   function getCreationDir(target: NoteTreeNode | null) {
     if (!workspace) return ""
     if (!target) return ""
+    if (target.path === workspace.assetsPath || target.path.startsWith(workspace.assetsPath + "\\" ) || target.path.startsWith(workspace.assetsPath + "/")) {
+      return ""
+    }
     if (target.type === "directory") return getRelativeNoteDir(target.path)
     const parentDir = target.path.replace(/[/\\][^/\\]+$/, "")
     return getRelativeNoteDir(parentDir)
+  }
+
+  function isAssetsNode(target: NoteTreeNode | null) {
+    if (!workspace || !target) return false
+    return target.path === workspace.assetsPath
+      || target.path.startsWith(workspace.assetsPath + "\\")
+      || target.path.startsWith(workspace.assetsPath + "/")
   }
 
   async function refreshNoteTree() {
@@ -438,12 +519,14 @@ export function AppShell() {
 
     switch (action) {
       case 'new-folder': {
+        if (isAssetsNode(target ?? null)) return
         setContextMenu(null)
         setNameInput('')
         setCreateDialog({ type: 'folder', dirPath: getCreationDir(target ?? null) })
         break
       }
       case 'new-note': {
+        if (isAssetsNode(target ?? null)) return
         setContextMenu(null)
         setNameInput('')
         setCreateDialog({ type: 'file', dirPath: getCreationDir(target ?? null) })
@@ -473,7 +556,7 @@ export function AppShell() {
         break
       }
       case 'move': {
-        if (!target) return
+        if (!target || isAssetsNode(target)) return
         setContextMenu(null)
         const dirs = await window.oneMind.notes.listDirectories(ws.workspacePath)
         setDirectoryList(dirs)
@@ -481,11 +564,23 @@ export function AppShell() {
         setMoveTarget(target)
         break
       }
+      case 'open-containing-folder': {
+        setContextMenu(null)
+        const targetPath = target?.path ?? ws.notesPath
+        try {
+          await window.oneMind.notes.openContainingFolder(targetPath, ws.workspacePath)
+        } catch (error) {
+          console.error("Open containing folder failed:", error)
+        }
+        break
+      }
     }
   }
 
   function getContextMenuItems(nodeType: string | null): ContextMenuItem[][] {
     // Tree context menu (prototype Phase 3)
+    const target = contextMenu?.targetNode ?? null
+    const targetIsAssets = isAssetsNode(target)
     const createItems: ContextMenuItem[] = [
         {
           label: '新建文件夹',
@@ -501,10 +596,19 @@ export function AppShell() {
         }
       ]
 
-    if (!nodeType) return [createItems]
+    const openFolderItem: ContextMenuItem = {
+      label: '打开所在目录',
+      action: 'open-containing-folder',
+      icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1.5 4.5V11.5H12.5V5.5H7L5.5 3.5H1.5V4.5Z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round"/><path d="M8 8.5H11M9.5 7V10" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/></svg>
+    }
+
+    if (!nodeType) return [createItems, [openFolderItem]]
 
     return [
-      createItems,
+      ...(targetIsAssets ? [] : [createItems]),
+      [
+        openFolderItem
+      ],
       [
         {
           label: '重命名',
@@ -520,11 +624,11 @@ export function AppShell() {
         }
       ],
       [
-        {
+        ...(targetIsAssets ? [] : [{
           label: '移动到…',
           action: 'move',
           icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 7H13M10 4L13 7L10 10" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round"/></svg>
-        }
+        }])
       ]
     ]
   }
@@ -553,6 +657,7 @@ export function AppShell() {
 
   function handleDirectoryDragOver(e: React.DragEvent, node: NoteTreeNode) {
     if (!draggingNode || draggingNode.path === node.path) return
+    if (isAssetsNode(node) || isAssetsNode(draggingNode)) return
     e.preventDefault()
     e.stopPropagation()
     e.dataTransfer.dropEffect = "move"
@@ -569,11 +674,13 @@ export function AppShell() {
     e.preventDefault()
     e.stopPropagation()
     if (!draggingNode || draggingNode.path === node.path) return
+    if (isAssetsNode(node) || isAssetsNode(draggingNode)) return
     await moveNodeToDirectory(draggingNode, getRelativeNoteDir(node.path))
   }
 
   function handleRootDragOver(e: React.DragEvent) {
     if (!draggingNode) return
+    if (isAssetsNode(draggingNode)) return
     e.preventDefault()
     e.dataTransfer.dropEffect = "move"
     setDropTargetPath("__root__")
@@ -582,10 +689,12 @@ export function AppShell() {
   async function handleRootDrop(e: React.DragEvent) {
     e.preventDefault()
     if (!draggingNode) return
+    if (isAssetsNode(draggingNode)) return
     await moveNodeToDirectory(draggingNode, "")
   }
 
   function renderTreeNode(node: NoteTreeNode, depth: number): React.ReactNode {
+    const inAssets = isAssetsNode(node)
     if (node.type === "directory") {
       const isDropTarget = dropTargetPath === node.path
       return (
@@ -594,7 +703,7 @@ export function AppShell() {
           className={"tree-folder" + (isDropTarget ? " drop-target" : "")}
           style={{ "--tree-depth": depth } as React.CSSProperties}
           open
-          draggable
+          draggable={!inAssets}
           onDragStart={(e) => handleTreeDragStart(e, node)}
           onDragEnd={() => { setDraggingNode(null); setDropTargetPath(null) }}
         >
@@ -620,16 +729,16 @@ export function AppShell() {
     return (
       <div
         key={node.id}
-        className={"tree-file" + (selectedSidebarPath === node.path ? " active" : "")}
+        className={"tree-file" + (selectedSidebarPath === node.path || activeFilePath === node.path ? " active" : "")}
         style={{ "--tree-depth": depth } as React.CSSProperties}
         data-file-id={node.id}
-        draggable
+        draggable={!inAssets}
         onDragStart={(e) => handleTreeDragStart(e, node)}
         onDragEnd={() => { setDraggingNode(null); setDropTargetPath(null) }}
-        onClick={() => openNoteFile(node.path)}
+        onClick={() => void openTreeFile(node.path)}
         onContextMenu={(e) => handleContextMenu(e, node)}
       >
-        <FileIcon />
+        {isMarkdownPath(node.path) ? <FileIcon /> : <ImageFileIcon />}
         <span className="tree-node-name tree-file-name">{node.name}</span>
       </div>
     )

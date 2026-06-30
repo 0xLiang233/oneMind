@@ -72,7 +72,15 @@ export function createTauriBridge(): Window["oneMind"] {
       rename: (oldPath, newName) => invoke<string>("notes_rename", { oldPath, newName }),
       move: (oldPath, workspacePath, relativeDir) =>
         invoke<string>("notes_move", { oldPath, workspacePath, relativeDir }),
-      delete: (targetPath) => invoke<boolean>("notes_delete", { targetPath })
+      delete: (targetPath) => invoke<boolean>("notes_delete", { targetPath }),
+      openFile: (targetPath, workspacePath) =>
+        invoke<boolean>("notes_open_file", { targetPath, workspacePath }),
+      openContainingFolder: (targetPath, workspacePath) =>
+        invoke<boolean>("notes_open_containing_folder", { targetPath, workspacePath })
+    },
+    files: {
+      readDataUrl: (targetPath, workspacePath) =>
+        invoke<string>("files_read_data_url", { targetPath, workspacePath })
     },
     quickNotes: {
       list: (workspacePath) => invoke<QuickNote[]>("quick_notes_list", { workspacePath }),

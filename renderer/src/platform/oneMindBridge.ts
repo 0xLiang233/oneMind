@@ -75,7 +75,12 @@ export function installOneMindBridgeFallback() {
       createFolder: () => unsupported<string>("notes.createFolder"),
       rename: () => unsupported<string>("notes.rename"),
       move: () => unsupported<string>("notes.move"),
-      delete: () => Promise.resolve(false)
+      delete: () => Promise.resolve(false),
+      openFile: () => Promise.resolve(false),
+      openContainingFolder: () => Promise.resolve(false)
+    },
+    files: {
+      readDataUrl: () => unsupported<string>("files.readDataUrl")
     },
     quickNotes: {
       list: () => Promise.resolve([]),

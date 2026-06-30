@@ -124,7 +124,15 @@ contextBridge.exposeInMainWorld('oneMind', {
     move: (oldPath: string, workspacePath: string, relativeDir: string) =>
       ipcRenderer.invoke("notes:move", oldPath, workspacePath, relativeDir) as Promise<string>,
     delete: (targetPath: string) =>
-      ipcRenderer.invoke("notes:delete", targetPath) as Promise<boolean>
+      ipcRenderer.invoke("notes:delete", targetPath) as Promise<boolean>,
+    openFile: (targetPath: string, workspacePath?: string) =>
+      ipcRenderer.invoke("notes:open-file", targetPath, workspacePath) as Promise<boolean>,
+    openContainingFolder: (targetPath: string, workspacePath?: string) =>
+      ipcRenderer.invoke("notes:open-containing-folder", targetPath, workspacePath) as Promise<boolean>
+  },
+  files: {
+    readDataUrl: (targetPath: string, workspacePath?: string) =>
+      ipcRenderer.invoke("files:read-data-url", targetPath, workspacePath) as Promise<string>
   },
   quickNotes: {
     list: (workspacePath: string) =>

@@ -2,6 +2,7 @@ import { Navigate, RouterProvider, createHashRouter } from 'react-router-dom'
 import { AppShell } from './shell/AppShell'
 import { CapturePage } from './views/CapturePage'
 import { HomePage } from './views/HomePage'
+import { FileViewerPage } from './views/FileViewerPage'
 import { NotesPage } from './views/NotesPage'
 import { RouteErrorPage } from './views/RouteErrorPage'
 import { SearchPage } from './views/SearchPage'
@@ -17,6 +18,7 @@ const router = createHashRouter([
       { index: true, element: <Navigate to="/home" replace /> },
       { path: 'home', element: <HomePage /> },
       { path: 'capture', element: <CapturePage /> },
+      { path: 'file-viewer', element: <FileViewerPage /> },
       { path: 'notes', element: <NotesPage /> },
       { path: 'sources', element: <SourcesPage /> },
       { path: 'search', element: <SearchPage /> },

@@ -118,6 +118,11 @@ interface Window {
       rename: (oldPath: string, newName: string) => Promise<string>
       move: (oldPath: string, workspacePath: string, relativeDir: string) => Promise<string>
       delete: (targetPath: string) => Promise<boolean>
+      openFile: (targetPath: string, workspacePath?: string) => Promise<boolean>
+      openContainingFolder: (targetPath: string, workspacePath?: string) => Promise<boolean>
+    }
+    files: {
+      readDataUrl: (targetPath: string, workspacePath?: string) => Promise<string>
     }
     quickNotes: {
       list: (workspacePath: string) => Promise<QuickNote[]>
