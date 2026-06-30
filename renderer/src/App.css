@@ -1081,6 +1081,118 @@ body.float-note-shell #root {
 .onemind-markdown-editor .ProseMirror ::selection {
   background: var(--color-accent-primary-glow);
 }
+.markdown-properties-panel {
+  display: grid;
+  gap: 0;
+  margin: 0 0 var(--space-5);
+  padding: var(--space-2) 0;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-bg-elevated) 72%, transparent);
+}
+.markdown-property-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
+  align-items: center;
+  min-height: 34px;
+  padding: 5px var(--space-3);
+  gap: var(--space-4);
+}
+.markdown-property-key {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+.markdown-property-key svg {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+.markdown-property-key span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.markdown-property-value {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.markdown-property-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  max-width: 100%;
+  padding: 2px 9px;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-primary-soft);
+  color: var(--color-accent-primary);
+  font-weight: 500;
+}
+.markdown-property-tag-remove {
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  background: transparent;
+  color: currentColor;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.72;
+}
+.markdown-property-tag-remove:hover {
+  background: var(--color-accent-primary-glow);
+  opacity: 1;
+}
+.markdown-property-tag-input,
+.markdown-property-input {
+  min-width: 88px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 14px;
+  outline: 0;
+}
+.markdown-property-tag-input {
+  width: 92px;
+  padding: 0 8px;
+  color: var(--color-accent-primary);
+}
+.markdown-property-tag-input:hover,
+.markdown-property-tag-input:focus {
+  background: var(--color-accent-primary-soft);
+}
+.markdown-property-input {
+  width: min(100%, 420px);
+  padding: 0;
+}
+.markdown-property-input:hover,
+.markdown-property-input:focus {
+  color: var(--color-text-primary);
+}
+.markdown-property-link {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-accent-primary);
+}
 
 .md-wysiwyg-editor {
   width: min(820px, calc(100% - 96px));

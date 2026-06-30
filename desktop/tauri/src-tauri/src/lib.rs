@@ -13,9 +13,9 @@ use std::{
 };
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
-use tauri::webview::WebviewBuilder;
+use tauri::webview::{NewWindowResponse, WebviewBuilder};
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindow,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_dialog::DialogExt;
@@ -1267,11 +1267,117 @@ fn miniapp_window_label(view_key: &str) -> String {
 }
 
 fn clamp_view_bounds(bounds: ViewBounds) -> ViewBounds {
+    const MAIN_CHROME_HEIGHT: f64 = 40.0;
+    let x = bounds.x.max(0.0);
+    let top = bounds.y.max(MAIN_CHROME_HEIGHT);
+    let overflow = (MAIN_CHROME_HEIGHT - bounds.y).max(0.0);
+
     ViewBounds {
-        x: bounds.x.max(0.0),
-        y: bounds.y.max(0.0),
+        x,
+        y: top,
         width: bounds.width.max(1.0),
-        height: bounds.height.max(1.0),
+        height: (bounds.height - overflow).max(1.0),
+    }
+}
+
+fn is_external_web_url(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+}
+
+fn text_has_auth_marker(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    [
+        "auth",
+        "login",
+        "signin",
+        "sign-in",
+        "oauth",
+        "authorize",
+        "sso",
+        "account",
+        "session",
+        "callback",
+        "identity",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
+fn host_matches_suffix(host: &str, suffix: &str) -> bool {
+    host == suffix || host.ends_with(&format!(".{suffix}"))
+}
+
+fn is_known_auth_provider_host(host: &str) -> bool {
+    [
+        "auth.openai.com",
+        "accounts.google.com",
+        "login.microsoftonline.com",
+        "login.live.com",
+        "appleid.apple.com",
+        "github.com",
+        "auth0.com",
+        "okta.com",
+    ]
+    .iter()
+    .any(|suffix| host_matches_suffix(host, suffix))
+}
+
+fn is_miniapp_auth_navigation(base_url: &Url, target_url: &Url) -> bool {
+    let Some(target_host) = target_url.host_str().map(|host| host.to_ascii_lowercase()) else {
+        return false;
+    };
+    let base_host = base_url.host_str().unwrap_or_default().to_ascii_lowercase();
+
+    is_known_auth_provider_host(&target_host)
+        || text_has_auth_marker(&target_host)
+        || text_has_auth_marker(target_url.path())
+        || (!base_host.is_empty()
+            && text_has_auth_marker(&base_host)
+            && host_matches_suffix(&target_host, base_host.trim_start_matches("auth.")))
+}
+
+fn should_keep_miniapp_navigation_inside(base_url: &Url, target_url: &Url) -> bool {
+    if !is_external_web_url(target_url) {
+        return true;
+    }
+
+    (base_url.scheme() == target_url.scheme()
+        && base_url.host_str() == target_url.host_str()
+        && base_url.port_or_known_default() == target_url.port_or_known_default())
+        || is_miniapp_auth_navigation(base_url, target_url)
+}
+
+fn open_external_web_url(url: &Url) -> Result<bool, String> {
+    if !is_external_web_url(url) {
+        return Ok(false);
+    }
+
+    #[cfg(windows)]
+    {
+        Command::new("rundll32.exe")
+            .arg("url.dll,FileProtocolHandler")
+            .arg(url.as_str())
+            .spawn()
+            .map_err(|e| format!("failed to open external url: {e}"))?;
+        return Ok(true);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(url.as_str())
+            .spawn()
+            .map_err(|e| format!("failed to open external url: {e}"))?;
+        return Ok(true);
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(url.as_str())
+            .spawn()
+            .map_err(|e| format!("failed to open external url: {e}"))?;
+        return Ok(true);
     }
 }
 
@@ -1903,18 +2009,84 @@ async fn miniapp_view_show(
     let main = app
         .get_window("main")
         .ok_or_else(|| "main window is not available".to_string())?;
-    let external_url = url
+    let external_url: Url = url
         .parse()
         .map_err(|e| format!("invalid miniapp url: {e}"))?;
+    let base_url = external_url.clone();
+    let navigation_app = app.clone();
+    let navigation_label = label.clone();
+    let new_window_app = app.clone();
+    let new_window_label = label.clone();
+    let new_window_base_url = base_url.clone();
+    let builder = WebviewBuilder::new(label, WebviewUrl::External(external_url))
+        .data_directory(
+            app.path()
+                .app_data_dir()
+                .map_err(|e| e.to_string())?
+                .join("miniapp-profiles")
+                .join(safe_storage_key(&partition)),
+        )
+        .on_navigation(move |target_url| {
+            if should_keep_miniapp_navigation_inside(&base_url, target_url) {
+                return true;
+            }
+
+            append_debug_log(
+                &navigation_app,
+                "miniapp_external_navigation",
+                Some(&format!("label={} url={}", navigation_label, target_url)),
+            );
+            if let Err(error) = open_external_web_url(target_url) {
+                append_debug_log(
+                    &navigation_app,
+                    "miniapp_external_navigation_failed",
+                    Some(&format!(
+                        "label={} url={} error={}",
+                        navigation_label, target_url, error
+                    )),
+                );
+            }
+            false
+        })
+        .on_new_window(move |target_url, _features| {
+            if should_keep_miniapp_navigation_inside(&new_window_base_url, &target_url) {
+                if let Some(webview) = new_window_app.get_webview(&new_window_label) {
+                    append_debug_log(
+                        &new_window_app,
+                        "miniapp_internal_new_window_navigation",
+                        Some(&format!("label={} url={}", new_window_label, target_url)),
+                    );
+                    if let Err(error) = webview.navigate(target_url) {
+                        append_debug_log(
+                            &new_window_app,
+                            "miniapp_internal_new_window_navigation_failed",
+                            Some(&format!("label={} error={}", new_window_label, error)),
+                        );
+                    }
+                }
+                return NewWindowResponse::Deny;
+            }
+
+            append_debug_log(
+                &new_window_app,
+                "miniapp_external_new_window",
+                Some(&format!("label={} url={}", new_window_label, target_url)),
+            );
+            if let Err(error) = open_external_web_url(&target_url) {
+                append_debug_log(
+                    &new_window_app,
+                    "miniapp_external_new_window_failed",
+                    Some(&format!(
+                        "label={} url={} error={}",
+                        new_window_label, target_url, error
+                    )),
+                );
+            }
+            NewWindowResponse::Deny
+        });
     let webview = main
         .add_child(
-            WebviewBuilder::new(label, WebviewUrl::External(external_url)).data_directory(
-                app.path()
-                    .app_data_dir()
-                    .map_err(|e| e.to_string())?
-                    .join("miniapp-profiles")
-                    .join(safe_storage_key(&partition)),
-            ),
+            builder,
             LogicalPosition::new(bounds.x, bounds.y),
             LogicalSize::new(bounds.width, bounds.height),
         )

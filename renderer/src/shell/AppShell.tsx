@@ -698,7 +698,7 @@ export function AppShell() {
           ))}
         </div>
         <div className="chrome-drag-region" data-tauri-drag-region />
-        <div className="titlebar-controls">
+        <div className="titlebar-controls" onPointerDown={(event) => event.stopPropagation()}>
           <button className="titlebar-btn" title="最小化" aria-label="最小化" onClick={() => void window.oneMind.window.minimize()}>
             <span className="titlebar-icon titlebar-icon-minimize" aria-hidden="true" />
           </button>
