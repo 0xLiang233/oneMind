@@ -1,12 +1,18 @@
+use base64::Engine;
 use serde::{Deserialize, Serialize};
+#[cfg(windows)]
+use windows::core::Interface;
 use std::{
     env,
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    process::Command,
     sync::Mutex,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
 use tauri::webview::WebviewBuilder;
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindow,
@@ -15,11 +21,27 @@ use tauri::{
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 #[cfg(windows)]
+use windows::Win32::Foundation::MAX_PATH;
+#[cfg(windows)]
+use windows::Win32::Graphics::Gdi::{
+    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC, SelectObject,
+    BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ,
+};
+#[cfg(windows)]
+use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
+#[cfg(windows)]
+use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ};
+#[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus as SetWin32Focus;
 #[cfg(windows)]
+use windows::Win32::UI::Shell::{
+    IShellLinkW, SHGetFileInfoW, SHGFI_ICON, SHGFI_LARGEICON, SHGFI_SMALLICON, SHFILEINFOW,
+    ShellLink,
+};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, GetWindowLongW, SetForegroundWindow, SetWindowLongW, ShowWindow, GWL_STYLE,
-    SW_SHOW, WS_SYSMENU,
+    BringWindowToTop, DestroyIcon, DrawIconEx, GetWindowLongW, SetForegroundWindow,
+    SetWindowLongW, ShowWindow, DI_NORMAL, GWL_STYLE, SW_SHOW, WS_SYSMENU,
 };
 
 #[derive(Serialize)]
@@ -102,6 +124,23 @@ struct ViewBounds {
 
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+struct SystemAppEntry {
+    id: String,
+    name: String,
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    icon_path: Option<String>,
+    source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_used_at: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct AppPreferences {
     theme: String,
     accent: String,
@@ -118,6 +157,14 @@ struct ShortcutStateStore {
     float_note_shortcut: Mutex<Option<String>>,
     float_note_is_pressed: Mutex<bool>,
     float_note_last_press: Mutex<Option<Instant>>,
+}
+
+struct ResolvedSystemApp {
+    id: String,
+    name: String,
+    path: String,
+    target_path: Option<String>,
+    icon_source_path: PathBuf,
 }
 
 fn now_iso_like() -> String {
@@ -216,6 +263,427 @@ fn safe_storage_key(value: &str) -> String {
         "default".to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+fn system_app_id(path: &Path) -> String {
+    format!("system-app-{}", safe_storage_key(&path_to_string(path).to_lowercase()))
+}
+
+fn system_app_name(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("Application")
+        .trim()
+        .to_string()
+}
+
+fn is_supported_system_app_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "lnk" | "exe" | "appref-ms" | "app"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn utf16_buffer_to_string(buffer: &[u16]) -> Option<String> {
+    let end = buffer.iter().position(|value| *value == 0).unwrap_or(buffer.len());
+    let value = String::from_utf16_lossy(&buffer[..end]).trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn is_unwanted_system_app_entry(name: &str, target_path: Option<&str>) -> bool {
+    let normalized_name = name.to_lowercase();
+    let blocked_name_keywords = [
+        "卸载",
+        "uninstall",
+        "remove ",
+        "readme",
+        "帮助",
+        "help",
+        "documentation",
+        "文档",
+        "license",
+    ];
+    if blocked_name_keywords
+        .iter()
+        .any(|keyword| normalized_name.contains(keyword))
+    {
+        return true;
+    }
+
+    if let Some(target_path) = target_path {
+        let normalized_target = target_path.to_lowercase();
+        let blocked_target_keywords = ["unins", "uninstall", "uninstaller", "remove.exe"];
+        if blocked_target_keywords
+            .iter()
+            .any(|keyword| normalized_target.contains(keyword))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn resolve_system_app_entry(path: &Path) -> Option<ResolvedSystemApp> {
+    let name = system_app_name(path);
+    let mut target_path = None;
+    let mut icon_source_path = path.to_path_buf();
+
+    #[cfg(windows)]
+    if path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|extension| extension.eq_ignore_ascii_case("lnk"))
+        .unwrap_or(false)
+    {
+        if let Some(link) = resolve_windows_shell_link(path) {
+            if let Some(icon_path) = link.icon_path.filter(|value| Path::new(value).exists()) {
+                icon_source_path = PathBuf::from(icon_path);
+            } else if let Some(target) = link.target_path.as_ref().filter(|value| Path::new(value).exists()) {
+                icon_source_path = PathBuf::from(target);
+            }
+            target_path = link.target_path;
+        }
+    }
+
+    if is_unwanted_system_app_entry(&name, target_path.as_deref()) {
+        return None;
+    }
+
+    Some(ResolvedSystemApp {
+        id: system_app_id(path),
+        name,
+        path: path_to_string(path),
+        target_path,
+        icon_source_path,
+    })
+}
+
+#[cfg(windows)]
+struct WindowsShellLinkInfo {
+    target_path: Option<String>,
+    icon_path: Option<String>,
+}
+
+#[cfg(windows)]
+fn resolve_windows_shell_link(path: &Path) -> Option<WindowsShellLinkInfo> {
+    unsafe {
+        let shell_link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        let persist_file: IPersistFile = shell_link.cast().ok()?;
+        let wide_path = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<u16>>();
+        persist_file
+            .Load(windows::core::PCWSTR(wide_path.as_ptr()), STGM_READ)
+            .ok()?;
+
+        let mut target_buffer = vec![0u16; MAX_PATH as usize];
+        let target_path = shell_link.GetPath(&mut target_buffer, std::ptr::null_mut(), 0).ok()
+            .and_then(|_| utf16_buffer_to_string(&target_buffer));
+
+        let mut icon_buffer = vec![0u16; MAX_PATH as usize];
+        let mut icon_index = 0;
+        let icon_path = shell_link
+            .GetIconLocation(&mut icon_buffer, &mut icon_index)
+            .ok()
+            .and_then(|_| utf16_buffer_to_string(&icon_buffer));
+
+        Some(WindowsShellLinkInfo {
+            target_path,
+            icon_path,
+        })
+    }
+}
+
+fn collect_system_apps_from_dir(app: &AppHandle, root: &Path, entries: &mut Vec<SystemAppEntry>) {
+    if !root.exists() {
+        return;
+    }
+
+    let Ok(items) = fs::read_dir(root) else {
+        return;
+    };
+
+    for item in items.flatten() {
+        let path = item.path();
+        if path.is_dir() {
+            collect_system_apps_from_dir(app, &path, entries);
+            continue;
+        }
+        if !is_supported_system_app_path(&path) {
+            continue;
+        }
+
+        let Some(resolved) = resolve_system_app_entry(&path) else {
+            continue;
+        };
+        let (icon_path, icon) = resolve_system_app_icon(app, &resolved.icon_source_path);
+        entries.push(SystemAppEntry {
+            id: resolved.id,
+            name: resolved.name,
+            path: resolved.path,
+            target_path: resolved.target_path,
+            icon_path,
+            source: "start-menu".to_string(),
+            icon,
+            last_used_at: None,
+        });
+    }
+}
+
+fn system_app_search_score(name: &str, query: &str) -> Option<usize> {
+    if query.is_empty() {
+        return Some(100);
+    }
+
+    let name = name.to_lowercase();
+    if name == query {
+        Some(0)
+    } else if name.starts_with(query) {
+        Some(10 + name.len().saturating_sub(query.len()))
+    } else if name.contains(query) {
+        Some(30 + name.find(query).unwrap_or(0))
+    } else {
+        None
+    }
+}
+
+fn list_system_apps(app: &AppHandle, query: &str) -> Vec<SystemAppEntry> {
+    let normalized_query = query.trim().to_lowercase();
+    let mut entries = Vec::new();
+
+    #[cfg(windows)]
+    {
+        if let Some(program_data) = env::var_os("PROGRAMDATA") {
+            collect_system_apps_from_dir(
+                app,
+                &PathBuf::from(program_data)
+                    .join("Microsoft")
+                    .join("Windows")
+                    .join("Start Menu")
+                    .join("Programs"),
+                &mut entries,
+            );
+        }
+        if let Some(app_data) = env::var_os("APPDATA") {
+            collect_system_apps_from_dir(
+                app,
+                &PathBuf::from(app_data)
+                    .join("Microsoft")
+                    .join("Windows")
+                    .join("Start Menu")
+                    .join("Programs"),
+                &mut entries,
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        collect_system_apps_from_dir(app, Path::new("/Applications"), &mut entries);
+        if let Some(home) = dirs::home_dir() {
+            collect_system_apps_from_dir(app, &home.join("Applications"), &mut entries);
+        }
+    }
+
+    entries.sort_by(|left, right| {
+        let left_score = system_app_search_score(&left.name, &normalized_query).unwrap_or(usize::MAX);
+        let right_score = system_app_search_score(&right.name, &normalized_query).unwrap_or(usize::MAX);
+        left_score
+            .cmp(&right_score)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    entries.dedup_by(|left, right| left.name.eq_ignore_ascii_case(&right.name));
+    entries
+        .into_iter()
+        .filter(|entry| system_app_search_score(&entry.name, &normalized_query).is_some())
+        .take(24)
+        .collect()
+}
+
+fn open_system_app_path(path: &str) -> Result<bool, String> {
+    if path.trim().is_empty() {
+        return Ok(false);
+    }
+
+    #[cfg(windows)]
+    {
+        Command::new("explorer.exe")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("failed to open system app: {e}"))?;
+        return Ok(true);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("failed to open system app: {e}"))?;
+        return Ok(true);
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("failed to open system app: {e}"))?;
+        return Ok(true);
+    }
+}
+
+fn resolve_system_app_icon(_app: &AppHandle, _path: &Path) -> (Option<String>, Option<String>) {
+    #[cfg(windows)]
+    {
+        resolve_windows_system_app_icon(_app, _path)
+    }
+    #[cfg(not(windows))]
+    {
+        (None, None)
+    }
+}
+
+#[cfg(windows)]
+fn resolve_windows_system_app_icon(app: &AppHandle, path: &Path) -> (Option<String>, Option<String>) {
+    let Ok(app_data_dir) = app.path().app_data_dir() else {
+        return (None, None);
+    };
+    let icon_dir = app_data_dir.join("system-app-icons");
+    if fs::create_dir_all(&icon_dir).is_err() {
+        return (None, None);
+    }
+    let icon_path = icon_dir.join(format!("v2-{}.png", system_app_id(path)));
+    if !icon_path.exists() && save_windows_shell_icon_png(path, &icon_path, 32).is_err() {
+        return (None, None);
+    }
+
+    let icon = fs::read(&icon_path).ok().map(|bytes| {
+        format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        )
+    });
+    (Some(path_to_string(&icon_path)), icon)
+}
+
+#[cfg(windows)]
+fn save_windows_shell_icon_png(source_path: &Path, output_path: &Path, size: i32) -> Result<(), String> {
+    let mut wide_path = source_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<u16>>();
+    if wide_path.len() > MAX_PATH as usize {
+        wide_path = format!(r"\\?\{}", source_path.to_string_lossy())
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+    }
+
+    let mut file_info = SHFILEINFOW::default();
+    let info_size = std::mem::size_of::<SHFILEINFOW>() as u32;
+    let result = unsafe {
+        SHGetFileInfoW(
+            windows::core::PCWSTR(wide_path.as_ptr()),
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            Some(&mut file_info),
+            info_size,
+            SHGFI_ICON | SHGFI_LARGEICON | SHGFI_SMALLICON,
+        )
+    };
+    if result == 0 || file_info.hIcon.is_invalid() {
+        return Err("failed to resolve shell icon".to_string());
+    }
+
+    let pixels = unsafe { hicon_to_rgba(file_info.hIcon, size)? };
+    unsafe {
+        let _ = DestroyIcon(file_info.hIcon);
+    }
+
+    let file = fs::File::create(output_path).map_err(|e| e.to_string())?;
+    let mut encoder = png::Encoder::new(file, size as u32, size as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    writer.write_image_data(&pixels).map_err(|e| e.to_string())
+}
+
+#[cfg(windows)]
+unsafe fn hicon_to_rgba(icon: windows::Win32::UI::WindowsAndMessaging::HICON, size: i32) -> Result<Vec<u8>, String> {
+    let screen_dc = GetDC(None);
+    if screen_dc.is_invalid() {
+        return Err("failed to get screen dc".to_string());
+    }
+
+    let memory_dc = CreateCompatibleDC(Some(screen_dc));
+    if memory_dc.is_invalid() {
+        let _ = ReleaseDC(None, screen_dc);
+        return Err("failed to create compatible dc".to_string());
+    }
+
+    let bitmap_info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: size,
+            biHeight: -size,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut bits_ptr = std::ptr::null_mut();
+    let bitmap: HBITMAP = CreateDIBSection(
+        Some(HDC::default()),
+        &bitmap_info,
+        DIB_RGB_COLORS,
+        &mut bits_ptr,
+        None,
+        0,
+    )
+    .map_err(|e| e.to_string())?;
+    if bitmap.is_invalid() || bits_ptr.is_null() {
+        let _ = DeleteDC(memory_dc);
+        let _ = ReleaseDC(None, screen_dc);
+        return Err("failed to create icon bitmap".to_string());
+    }
+
+    let old_object: HGDIOBJ = SelectObject(memory_dc, HGDIOBJ(bitmap.0));
+    let drawn = DrawIconEx(memory_dc, 0, 0, icon, size, size, 0, None, DI_NORMAL);
+    let byte_len = (size * size * 4) as usize;
+    let bgra = std::slice::from_raw_parts(bits_ptr as *const u8, byte_len);
+    let mut rgba = Vec::with_capacity(byte_len);
+    for pixel in bgra.chunks_exact(4) {
+        rgba.push(pixel[2]);
+        rgba.push(pixel[1]);
+        rgba.push(pixel[0]);
+        rgba.push(pixel[3]);
+    }
+
+    let _ = SelectObject(memory_dc, old_object);
+    let _ = DeleteObject(HGDIOBJ(bitmap.0));
+    let _ = DeleteDC(memory_dc);
+    let _ = ReleaseDC(None, screen_dc);
+
+    if drawn.is_ok() {
+        Ok(rgba)
+    } else {
+        Err("failed to draw shell icon".to_string())
     }
 }
 
@@ -1381,6 +1849,37 @@ fn float_note_register_shortcut(app: AppHandle, shortcut: String) -> Result<bool
 }
 
 #[tauri::command]
+fn system_apps_search(app: AppHandle, workspace_path: String, query: String) -> Result<Vec<SystemAppEntry>, String> {
+    let apps = list_system_apps(&app, &query);
+    append_debug_log(
+        &app,
+        "system_apps_search",
+        Some(&format!(
+            "workspace={} query={} count={}",
+            workspace_path,
+            query,
+            apps.len()
+        )),
+    );
+    Ok(apps)
+}
+
+#[tauri::command]
+fn system_apps_open(app: AppHandle, workspace_path: String, app_entry: SystemAppEntry) -> Result<bool, String> {
+    append_debug_log(
+        &app,
+        "system_apps_open",
+        Some(&format!(
+            "workspace={} name={} path={}",
+            workspace_path,
+            app_entry.name,
+            app_entry.path
+        )),
+    );
+    open_system_app_path(&app_entry.path)
+}
+
+#[tauri::command]
 async fn miniapp_view_show(
     app: AppHandle,
     view_key: String,
@@ -1566,6 +2065,8 @@ pub fn run() {
             float_note_set_height,
             float_note_open_route,
             float_note_register_shortcut,
+            system_apps_search,
+            system_apps_open,
             miniapp_view_show,
             miniapp_view_set_bounds,
             miniapp_view_hide,

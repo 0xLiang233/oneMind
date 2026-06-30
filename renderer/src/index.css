@@ -98,6 +98,16 @@
   --color-settings-sidebar-bg-start: var(--color-bg-elevated);
   --color-settings-sidebar-bg-end: var(--color-bg-elevated);
   --color-tree-active-bg: var(--color-bg-selected);
+  --color-contextmenu-bg: rgba(20, 20, 23, 0.94);
+  --color-contextmenu-border: rgba(255, 255, 255, 0.08);
+  --color-contextmenu-item-hover: var(--color-accent-primary-soft);
+  --color-contextmenu-item-active: var(--color-accent-primary-glow);
+  --color-contextmenu-shortcut: var(--color-text-tertiary);
+  --color-contextmenu-separator: var(--color-border-subtle);
+  --color-contextmenu-ai-accent: var(--color-accent-secondary);
+  --color-contextmenu-ai-glow: var(--color-accent-secondary-glow);
+  --color-contextmenu-danger: var(--color-danger);
+  --color-contextmenu-danger-hover: color-mix(in srgb, var(--color-danger) 14%, transparent);
 
   /* Accent option swatches */
   --color-accent-swatch-purple: #A78BFA;
@@ -145,6 +155,16 @@
   --color-settings-sidebar-bg-start: var(--color-bg-elevated);
   --color-settings-sidebar-bg-end: #F3F1FA;
   --color-tree-active-bg: var(--color-bg-selected);
+  --color-contextmenu-bg: rgba(255, 255, 255, 0.96);
+  --color-contextmenu-border: rgba(23, 20, 43, 0.10);
+  --color-contextmenu-item-hover: var(--color-accent-primary-soft);
+  --color-contextmenu-item-active: var(--color-accent-primary-glow);
+  --color-contextmenu-shortcut: var(--color-text-tertiary);
+  --color-contextmenu-separator: var(--color-border-subtle);
+  --color-contextmenu-ai-accent: var(--color-accent-secondary);
+  --color-contextmenu-ai-glow: var(--color-accent-secondary-glow);
+  --color-contextmenu-danger: var(--color-danger);
+  --color-contextmenu-danger-hover: color-mix(in srgb, var(--color-danger) 10%, transparent);
 }
 
 /* System auto-detection */
@@ -178,6 +198,16 @@
     --color-settings-sidebar-bg-start: var(--color-bg-elevated);
     --color-settings-sidebar-bg-end: #F3F1FA;
     --color-tree-active-bg: var(--color-bg-selected);
+    --color-contextmenu-bg: rgba(255, 255, 255, 0.96);
+    --color-contextmenu-border: rgba(23, 20, 43, 0.10);
+    --color-contextmenu-item-hover: var(--color-accent-primary-soft);
+    --color-contextmenu-item-active: var(--color-accent-primary-glow);
+    --color-contextmenu-shortcut: var(--color-text-tertiary);
+    --color-contextmenu-separator: var(--color-border-subtle);
+    --color-contextmenu-ai-accent: var(--color-accent-secondary);
+    --color-contextmenu-ai-glow: var(--color-accent-secondary-glow);
+    --color-contextmenu-danger: var(--color-danger);
+    --color-contextmenu-danger-hover: color-mix(in srgb, var(--color-danger) 10%, transparent);
   }
 }
 

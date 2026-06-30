@@ -25,6 +25,8 @@ dirs = "6"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-global-shortcut = "2.3.2"
+png = "0.18.1"
+base64 = "0.22.1"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

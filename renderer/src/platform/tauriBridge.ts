@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
+
 export function createTauriBridge(): Window["oneMind"] {
   return {
     runtime: {
@@ -91,8 +92,10 @@ export function createTauriBridge(): Window["oneMind"] {
         invoke<AppPreferences>("preferences_write", { workspacePath, preferences })
     },
     systemApps: {
-      search: () => Promise.resolve([]),
-      open: () => Promise.resolve(false)
+      search: async (workspacePath, query) => {
+        return invoke<SystemAppEntry[]>("system_apps_search", { workspacePath, query })
+      },
+      open: (workspacePath, appEntry) => invoke<boolean>("system_apps_open", { workspacePath, appEntry })
     },
     miniappView: {
       show: ({ viewKey, url, partition, bounds }) =>

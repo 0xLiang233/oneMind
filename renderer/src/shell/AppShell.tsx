@@ -9,6 +9,9 @@ interface Tab {
 }
 
 const SIDEBAR_STORAGE_KEY = "onemind-sidebar-collapsed"
+const SIDEBAR_WIDTH_STORAGE_KEY = "onemind-sidebar-width"
+const SIDEBAR_MIN_WIDTH = 204
+const SIDEBAR_MAX_WIDTH = 360
 
 function applyPreferences(preferences: AppPreferences) {
   const root = document.documentElement
@@ -102,6 +105,10 @@ function normalizeRoutePath(path: string) {
   return path === "/" ? "/home" : path
 }
 
+function clampSidebarWidth(width: number) {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)))
+}
+
 function FolderArrow() {
   return (
     <span className="tree-folder-arrow">
@@ -145,6 +152,8 @@ export function AppShell() {
   const [tabs, setTabs] = useState<Tab[]>([])
   const [activeTabPath, setActiveTabPath] = useState(normalizeRoutePath(location.pathname) + location.search)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(204)
+  const sidebarWidthRef = useRef(204)
   const [notesSearchExpanded, setNotesSearchExpanded] = useState(false)
   const [notesSearchQuery, setNotesSearchQuery] = useState("")
   const notesSearchRef = useRef<HTMLInputElement | null>(null)
@@ -208,11 +217,19 @@ export function AppShell() {
   useEffect(() => {
     const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY)
     setSidebarCollapsed(saved === "true")
+    const savedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY))
+    if (Number.isFinite(savedWidth)) {
+      setSidebarWidth(clampSidebarWidth(savedWidth))
+    }
   }, [])
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_STORAGE_KEY, String(sidebarCollapsed))
   }, [sidebarCollapsed])
+
+  useEffect(() => {
+    sidebarWidthRef.current = sidebarWidth
+  }, [sidebarWidth])
 
   const currentRoutePath = normalizeRoutePath(location.pathname) + location.search
 
@@ -248,6 +265,32 @@ export function AppShell() {
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed(prev => !prev)
   }, [])
+
+  const startSidebarResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (sidebarCollapsed) return
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = sidebarWidth
+    const sidebarPosition = document.documentElement.dataset.sidebarPosition
+
+    function handlePointerMove(moveEvent: PointerEvent) {
+      const delta = sidebarPosition === "right"
+        ? startX - moveEvent.clientX
+        : moveEvent.clientX - startX
+      setSidebarWidth(clampSidebarWidth(startWidth + delta))
+    }
+
+    function handlePointerUp() {
+      document.removeEventListener("pointermove", handlePointerMove)
+      document.removeEventListener("pointerup", handlePointerUp)
+      document.body.classList.remove("sidebar-resizing")
+      localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clampSidebarWidth(sidebarWidthRef.current)))
+    }
+
+    document.body.classList.add("sidebar-resizing")
+    document.addEventListener("pointermove", handlePointerMove)
+    document.addEventListener("pointerup", handlePointerUp)
+  }, [sidebarCollapsed, sidebarWidth])
 
   const handleTabsWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
@@ -497,7 +540,7 @@ export function AppShell() {
     }
     return (
       <div className="file-tree">
-        {nodes.map(node => renderTreeNode(node))}
+        {nodes.map(node => renderTreeNode(node, 0))}
       </div>
     )
   }
@@ -542,13 +585,14 @@ export function AppShell() {
     await moveNodeToDirectory(draggingNode, "")
   }
 
-  function renderTreeNode(node: NoteTreeNode): React.ReactNode {
+  function renderTreeNode(node: NoteTreeNode, depth: number): React.ReactNode {
     if (node.type === "directory") {
       const isDropTarget = dropTargetPath === node.path
       return (
         <details
           key={node.id}
           className={"tree-folder" + (isDropTarget ? " drop-target" : "")}
+          style={{ "--tree-depth": depth } as React.CSSProperties}
           open
           draggable
           onDragStart={(e) => handleTreeDragStart(e, node)}
@@ -562,12 +606,12 @@ export function AppShell() {
           >
             <FolderArrow />
             <FolderIcon />
-            <span>{node.name}</span>
+            <span className="tree-node-name">{node.name}</span>
           </summary>
           <div className="tree-file-list">
             {node.children && node.children.length > 0
-              ? node.children.map(child => renderTreeNode(child))
-              : <div className="tree-empty-folder">空文件夹</div>
+              ? node.children.map(child => renderTreeNode(child, depth + 1))
+              : <div className="tree-empty-folder" style={{ "--tree-depth": depth + 1 } as React.CSSProperties}>空文件夹</div>
             }
           </div>
         </details>
@@ -577,6 +621,7 @@ export function AppShell() {
       <div
         key={node.id}
         className={"tree-file" + (selectedSidebarPath === node.path ? " active" : "")}
+        style={{ "--tree-depth": depth } as React.CSSProperties}
         data-file-id={node.id}
         draggable
         onDragStart={(e) => handleTreeDragStart(e, node)}
@@ -585,13 +630,16 @@ export function AppShell() {
         onContextMenu={(e) => handleContextMenu(e, node)}
       >
         <FileIcon />
-        <span className="tree-file-name">{node.name}</span>
+        <span className="tree-node-name tree-file-name">{node.name}</span>
       </div>
     )
   }
 
   return (
-    <div className={"app-shell" + (sidebarCollapsed ? " sidebar-collapsed" : "")}>
+    <div
+      className={"app-shell" + (sidebarCollapsed ? " sidebar-collapsed" : "")}
+      style={{ "--sidebar-expanded-width": `${sidebarWidth}px` } as React.CSSProperties}
+    >
       <header className="app-chrome" data-tauri-drag-region>
         <div className="chrome-brand" data-tauri-drag-region>
           <div className="chrome-brand-identity" aria-hidden="true" data-tauri-drag-region>
@@ -666,6 +714,14 @@ export function AppShell() {
       <div className={"workspace-layout" + (sidebarCollapsed ? " sidebar-collapsed" : "")}>
         {/* Sidebar */}
         <aside className="sidebar" id="sidebar">
+          <div
+            className="sidebar-resize-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整侧边栏宽度"
+            title="拖拽调整侧边栏宽度"
+            onPointerDown={startSidebarResize}
+          />
           {/* Expanded content */}
           <div className="sidebar-expanded-content">
             {/* Quick Note Section (fixed) */}
