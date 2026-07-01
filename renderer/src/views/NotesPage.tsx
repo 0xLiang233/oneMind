@@ -16,6 +16,7 @@ export function NotesPage() {
   const [loadedPath, setLoadedPath] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState("从侧边栏选择笔记开始编辑")
+  const [editorMode, setEditorMode] = useState<"rich" | "source">("rich")
 
   const selectedName = useMemo(() => {
     if (!selectedSidebarPath) return "未选择笔记"
@@ -38,10 +39,12 @@ export function NotesPage() {
         setLoadedPath(null)
         setContent("")
         setSavedContent("")
+        setEditorMode("rich")
         setStatus("从侧边栏选择笔记开始编辑")
         return
       }
       setLoadedPath(null)
+      setEditorMode("rich")
       setStatus("正在加载...")
       try {
         const next = await window.oneMind.notes.read(selectedSidebarPath)
@@ -93,18 +96,48 @@ export function NotesPage() {
             {selectedSidebarPath ? <div className="md-ai-badge"><span className="md-ai-badge-dot" />AI 已整理</div> : null}
           </div>
           <div className="notes-editor-actions">
-            <div className="notes-status">{isDirty ? "正在自动保存..." : status}</div>
+            <div className="notes-status">{saving ? "正在自动保存..." : status}</div>
+            {selectedSidebarPath ? (
+              <div className="notes-more-menu">
+                <button className="notes-more-button" type="button" aria-label="更多" aria-haspopup="menu">
+                  <span />
+                  <span />
+                  <span />
+                </button>
+                <div className="notes-more-panel" role="menu">
+                  <button
+                    type="button"
+                    className={`notes-more-item ${editorMode === "source" ? "active" : ""}`}
+                    role="menuitemradio"
+                    aria-checked={editorMode === "source"}
+                    onClick={() => setEditorMode("source")}
+                  >
+                    <span className="notes-more-item-label">源码模式</span>
+                    <span className="notes-more-check" aria-hidden="true">{editorMode === "source" ? "✓" : ""}</span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
         {/* Editor */}
         <div className="md-editor-stage">
           {selectedSidebarPath && loadedPath === selectedSidebarPath ? (
-            <MarkdownEditor
-              key={selectedSidebarPath}
-              value={content}
-              onChange={setContent}
-            />
+            editorMode === "source" ? (
+              <textarea
+                className="notes-source-editor"
+                value={content}
+                onChange={(event) => setContent(event.target.value)}
+                spellCheck={false}
+              />
+            ) : (
+              <MarkdownEditor
+                key={selectedSidebarPath}
+                value={content}
+                onChange={setContent}
+              />
+            )
           ) : selectedSidebarPath ? (
             <div className="notes-empty">{status}</div>
           ) : (
