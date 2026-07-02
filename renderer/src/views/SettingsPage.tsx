@@ -128,6 +128,8 @@ export function SettingsPage() {
   const savedShortcutRef = useRef(defaultPreferences.floatNoteShortcut)
   const shortcutButtonRef = useRef<HTMLButtonElement | null>(null)
   const pendingShortcutRef = useRef("")
+  const finishShortcutRecordingRef = useRef<() => Promise<void>>(async () => undefined)
+  const previewShortcutFromEventRef = useRef<(event: ShortcutKeyEvent) => void>(() => undefined)
 
   const workspacePath = workspace?.workspacePath ?? ""
 
@@ -232,6 +234,22 @@ export function SettingsPage() {
     await persistShortcut(shortcut)
   }
 
+  useEffect(() => {
+    finishShortcutRecordingRef.current = finishShortcutRecording
+    previewShortcutFromEventRef.current = previewShortcutFromEvent
+  })
+
+  useEffect(() => {
+    if (!recordingShortcut) return
+
+    void window.oneMind.window.setSystemMenuEnabled?.(false)
+    void window.oneMind.floatNote.setShortcutEnabled?.(false)
+    return () => {
+      void window.oneMind.window.setSystemMenuEnabled?.(true)
+      void window.oneMind.floatNote.setShortcutEnabled?.(true)
+    }
+  }, [recordingShortcut])
+
   async function handleShortcutKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
     event.preventDefault()
     event.stopPropagation()
@@ -249,21 +267,21 @@ export function SettingsPage() {
       event.preventDefault()
       event.stopPropagation()
       if (normalizeShortcutKey(event) === "Enter") {
-        void finishShortcutRecording()
+        void finishShortcutRecordingRef.current()
         return
       }
-      previewShortcutFromEvent(event)
+      previewShortcutFromEventRef.current(event)
     }
 
     const handleKeyUp = (event: KeyboardEvent) => {
       event.preventDefault()
       event.stopPropagation()
-      previewShortcutFromEvent(event)
+      previewShortcutFromEventRef.current(event)
     }
 
     const handlePointerDown = (event: PointerEvent) => {
       if (shortcutButtonRef.current?.contains(event.target as Node)) return
-      void finishShortcutRecording()
+      void finishShortcutRecordingRef.current()
     }
 
     window.addEventListener("keydown", handleKeyDown, true)
@@ -484,6 +502,7 @@ export function SettingsPage() {
                   type="button"
                   className={recordingShortcut ? "settings-shortcut-recorder recording" : "settings-shortcut-recorder"}
                   onClick={() => {
+                    if (recordingShortcut) return
                     setRecordingShortcut(true)
                     setRecordingShortcutPreview("")
                     setStatus("请按下新的快捷键组合。")

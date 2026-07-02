@@ -11,6 +11,7 @@ export function createTauriBridge(): Window["oneMind"] {
       minimize: () => invoke<void>("window_minimize"),
       toggleMaximize: () => invoke<void>("window_toggle_maximize"),
       close: () => invoke<void>("window_close"),
+      setSystemMenuEnabled: (enabled) => invoke<boolean>("window_set_system_menu_enabled", { enabled }),
       onNavigate: (callback) => {
         let disposed = false
         let unlisten: (() => void) | null = null
@@ -35,6 +36,7 @@ export function createTauriBridge(): Window["oneMind"] {
       setHeight: (height) => invoke<boolean>("float_note_set_height", { height }),
       openRoute: (route) => invoke<boolean>("float_note_open_route", { route }),
       registerShortcut: (shortcut) => invoke<boolean>("float_note_register_shortcut", { shortcut }),
+      setShortcutEnabled: (enabled) => invoke<boolean>("float_note_set_shortcut_enabled", { enabled }),
       onShown: (callback) => {
         let disposed = false
         const unlisteners: Array<() => void> = []

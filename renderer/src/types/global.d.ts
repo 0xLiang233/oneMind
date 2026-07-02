@@ -85,6 +85,7 @@ interface Window {
       minimize: () => Promise<void>
       toggleMaximize: () => Promise<void>
       close: () => Promise<void>
+      setSystemMenuEnabled?: (enabled: boolean) => Promise<boolean>
       onNavigate: (callback: (route: string) => void) => () => void
     }
     floatNote: {
@@ -95,6 +96,7 @@ interface Window {
       setHeight: (height: number) => Promise<boolean>
       openRoute: (route: string) => Promise<boolean>
       registerShortcut: (shortcut: string) => Promise<boolean>
+      setShortcutEnabled?: (enabled: boolean) => Promise<boolean>
       onShown: (callback: (reason?: 'shown' | 'focus-ready') => void) => () => void
     }
     workspace: {

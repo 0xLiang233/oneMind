@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Outlet, useLocation, useNavigate } from "react-router-dom"
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu"
 
@@ -110,6 +110,15 @@ function clampSidebarWidth(width: number) {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)))
 }
 
+function getInitialSidebarCollapsed() {
+  return localStorage.getItem(SIDEBAR_STORAGE_KEY) === "true"
+}
+
+function getInitialSidebarWidth() {
+  const savedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY))
+  return Number.isFinite(savedWidth) ? clampSidebarWidth(savedWidth) : 204
+}
+
 function FolderArrow() {
   return (
     <span className="tree-folder-arrow">
@@ -187,6 +196,29 @@ function getTabLabel(pathname: string, search: string) {
   return routeLabels[pathname] || "页面"
 }
 
+function createTabFromRoute(routePath: string): Tab | null {
+  const [rawPathname, rawSearch = ""] = routePath.split("?")
+  const pathname = normalizeRoutePath(rawPathname)
+  if (pathname === "/home") return null
+  const search = rawSearch ? `?${rawSearch}` : ""
+  const path = pathname + search
+  return {
+    id: path,
+    path,
+    label: getTabLabel(pathname, search)
+  }
+}
+
+function upsertTab(tabs: Tab[], nextTab: Tab | null) {
+  if (!nextTab) return tabs.filter(tab => normalizeRoutePath(tab.path.split("?")[0]) !== "/home")
+  const withoutHome = tabs.filter(tab => normalizeRoutePath(tab.path.split("?")[0]) !== "/home")
+  const exists = withoutHome.some(tab => tab.path === nextTab.path)
+  if (exists) {
+    return withoutHome.map(tab => tab.path === nextTab.path ? nextTab : tab)
+  }
+  return [...withoutHome, nextTab]
+}
+
 export function AppShell() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -197,9 +229,8 @@ export function AppShell() {
   const [bridgeReady, setBridgeReady] = useState(false)
   const [bridgeError, setBridgeError] = useState("")
   const [tabs, setTabs] = useState<Tab[]>([])
-  const [activeTabPath, setActiveTabPath] = useState(normalizeRoutePath(location.pathname) + location.search)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [sidebarWidth, setSidebarWidth] = useState(204)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(getInitialSidebarCollapsed)
+  const [sidebarWidth, setSidebarWidth] = useState(getInitialSidebarWidth)
   const sidebarWidthRef = useRef(204)
   const [notesSearchExpanded, setNotesSearchExpanded] = useState(false)
   const [notesSearchQuery, setNotesSearchQuery] = useState("")
@@ -263,16 +294,6 @@ export function AppShell() {
     }
   }, [navigate])
 
-  // Sidebar collapsed state — no-flash init
-  useEffect(() => {
-    const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY)
-    setSidebarCollapsed(saved === "true")
-    const savedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY))
-    if (Number.isFinite(savedWidth)) {
-      setSidebarWidth(clampSidebarWidth(savedWidth))
-    }
-  }, [])
-
   useEffect(() => {
     localStorage.setItem(SIDEBAR_STORAGE_KEY, String(sidebarCollapsed))
   }, [sidebarCollapsed])
@@ -282,8 +303,8 @@ export function AppShell() {
   }, [sidebarWidth])
 
   const currentRoutePath = normalizeRoutePath(location.pathname) + location.search
-
-  useEffect(() => { setActiveTabPath(currentRoutePath) }, [currentRoutePath])
+  const activeTabPath = currentRoutePath
+  const visibleTabs = useMemo(() => upsertTab(tabs, createTabFromRoute(currentRoutePath)), [currentRoutePath, tabs])
 
   // Load sidebar data
   useEffect(() => {
@@ -294,6 +315,10 @@ export function AppShell() {
     }
     void load()
   }, [workspace])
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed(prev => !prev)
+  }, [])
 
   // Keyboard shortcuts for sidebar collapse
   useEffect(() => {
@@ -310,11 +335,7 @@ export function AppShell() {
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [])
-
-  const toggleSidebar = useCallback(() => {
-    setSidebarCollapsed(prev => !prev)
-  }, [])
+  }, [toggleSidebar])
 
   const startSidebarResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (sidebarCollapsed) return
@@ -358,33 +379,17 @@ export function AppShell() {
     }
   }, [notesSearchQuery])
 
+  const openRoute = useCallback((path: string) => {
+    const nextRoutePath = normalizeRoutePath(path)
+    setTabs(prev => upsertTab(upsertTab(prev, createTabFromRoute(currentRoutePath)), createTabFromRoute(nextRoutePath)))
+    navigate(nextRoutePath)
+  }, [currentRoutePath, navigate])
+
   useEffect(() => {
     return window.oneMind.window.onNavigate((route) => {
       openRoute(route)
     })
-  }, [])
-
-  // Tab tracking
-  useEffect(() => {
-    const normalizedPathname = normalizeRoutePath(location.pathname)
-    if (normalizedPathname === "/home") {
-      setTabs(prev => prev.filter(tab => normalizeRoutePath(tab.path.split("?")[0]) !== "/home"))
-      return
-    }
-    setTabs(prev => {
-      const cleaned = prev.filter(tab => normalizeRoutePath(tab.path.split("?")[0]) !== "/home")
-      const exists = cleaned.find(t => t.path === currentRoutePath)
-      const label = getTabLabel(normalizedPathname, location.search)
-      if (exists) {
-        return cleaned.map(tab => tab.path === currentRoutePath ? { ...tab, label } : tab)
-      }
-      return [...cleaned, { id: currentRoutePath, path: currentRoutePath, label }]
-    })
-  }, [currentRoutePath, location.pathname, location.search])
-
-  function openRoute(path: string) {
-    navigate(normalizeRoutePath(path))
-  }
+  }, [openRoute])
 
   function openNoteFile(filePath: string) {
     setSelectedSidebarPath(filePath)
@@ -467,9 +472,10 @@ export function AppShell() {
   function closeTab(path: string) {
     setTabs(prev => {
       const next = prev.filter(t => t.path !== path)
-      if (activeTabPath === path && next.length > 0) {
-        navigate(next[next.length - 1].path)
-      } else if (next.length === 0) {
+      const nextVisible = visibleTabs.filter(t => t.path !== path)
+      if (activeTabPath === path && nextVisible.length > 0) {
+        navigate(nextVisible[nextVisible.length - 1].path)
+      } else if (nextVisible.length === 0) {
         navigate("/home")
       }
       return next
@@ -778,7 +784,7 @@ export function AppShell() {
           >
             首页
           </button>
-          {tabs.map(tab => (
+          {visibleTabs.map(tab => (
             <button
               key={tab.id}
               type="button"

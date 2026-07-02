@@ -73,6 +73,8 @@ export function FloatNotePage() {
   const resizeFrameRef = useRef(0)
   const focusTimersRef = useRef<number[]>([])
   const debugEnabledRef = useRef(false)
+  const requestInputFocusRef = useRef<() => void>(() => undefined)
+  const syncPanelHeightRef = useRef<() => void>(() => undefined)
 
   function getFocusSnapshot(stage: string) {
     const input = inputRef.current
@@ -237,13 +239,13 @@ export function FloatNotePage() {
   useEffect(() => {
     function handleWindowFocus() {
       writeDebugLog("float_note_window_focus_event", getFocusSnapshot("window_focus"))
-      requestInputFocus()
+      requestInputFocusRef.current()
     }
 
     function handleVisibilityChange() {
       writeDebugLog("float_note_visibility_change", getFocusSnapshot("visibility_change"))
       if (document.visibilityState === "visible") {
-        requestInputFocus()
+        requestInputFocusRef.current()
       }
     }
 
@@ -278,14 +280,14 @@ export function FloatNotePage() {
       }
       window.requestAnimationFrame(() => {
         if (reason === "shown") {
-          syncPanelHeight()
+          syncPanelHeightRef.current()
         }
-        requestInputFocus()
+        requestInputFocusRef.current()
       })
     })
     window.requestAnimationFrame(() => {
-      syncPanelHeight()
-      requestInputFocus()
+      syncPanelHeightRef.current()
+      requestInputFocusRef.current()
     })
     return () => {
       disposed = true
@@ -318,8 +320,13 @@ export function FloatNotePage() {
     scheduleWindowHeight(getWindowHeight(inputHeight))
   }
 
+  useEffect(() => {
+    requestInputFocusRef.current = requestInputFocus
+    syncPanelHeightRef.current = syncPanelHeight
+  })
+
   useLayoutEffect(() => {
-    syncPanelHeight()
+    syncPanelHeightRef.current()
   }, [toolResults.length, mode, saveState])
 
   function resetPalette() {

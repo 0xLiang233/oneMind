@@ -21,7 +21,7 @@ use tauri::{
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 #[cfg(windows)]
-use windows::Win32::Foundation::{LPARAM, MAX_PATH, WPARAM};
+use windows::Win32::Foundation::MAX_PATH;
 #[cfg(windows)]
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC, SelectObject,
@@ -40,8 +40,9 @@ use windows::Win32::UI::Shell::{
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, DestroyIcon, DrawIconEx, IsZoomed, PostMessageW, SetForegroundWindow,
-    ShowWindow, DI_NORMAL, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, WM_CLOSE,
+    BringWindowToTop, DestroyIcon, DrawIconEx, GetWindowLongPtrW, SetForegroundWindow,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, DI_NORMAL, GWL_STYLE, SWP_FRAMECHANGED,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOW, WS_SYSMENU,
 };
 
 #[derive(Serialize)]
@@ -155,6 +156,7 @@ struct AppPreferences {
 #[derive(Default)]
 struct ShortcutStateStore {
     float_note_shortcut: Mutex<Option<String>>,
+    float_note_suspended_shortcut: Mutex<Option<String>>,
     float_note_is_pressed: Mutex<bool>,
     float_note_last_press: Mutex<Option<Instant>>,
 }
@@ -1042,48 +1044,43 @@ fn activate_float_note_window_native(app: &AppHandle, window: &WebviewWindow, so
 fn activate_float_note_window_native(_app: &AppHandle, _window: &WebviewWindow, _source: &str) {}
 
 #[cfg(windows)]
-fn minimize_window_native(window: &WebviewWindow) -> bool {
-    window
-        .hwnd()
-        .map(|hwnd| unsafe { ShowWindow(hwnd, SW_MINIMIZE).as_bool() })
-        .unwrap_or(false)
+fn set_window_system_menu_enabled_native(
+    window: &WebviewWindow,
+    enabled: bool,
+) -> Result<(), String> {
+    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        let system_menu_style = WS_SYSMENU.0 as isize;
+        let next_style = if enabled {
+            style | system_menu_style
+        } else {
+            style & !system_menu_style
+        };
+        if next_style == style {
+            return Ok(());
+        }
+        SetWindowLongPtrW(hwnd, GWL_STYLE, next_style);
+        SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[cfg(not(windows))]
-fn minimize_window_native(_window: &WebviewWindow) -> bool {
-    false
-}
-
-#[cfg(windows)]
-fn toggle_maximize_window_native(window: &WebviewWindow) -> bool {
-    window
-        .hwnd()
-        .map(|hwnd| unsafe {
-            if IsZoomed(hwnd).as_bool() {
-                ShowWindow(hwnd, SW_RESTORE).as_bool()
-            } else {
-                ShowWindow(hwnd, SW_MAXIMIZE).as_bool()
-            }
-        })
-        .unwrap_or(false)
-}
-
-#[cfg(not(windows))]
-fn toggle_maximize_window_native(_window: &WebviewWindow) -> bool {
-    false
-}
-
-#[cfg(windows)]
-fn close_window_native(window: &WebviewWindow) -> bool {
-    window
-        .hwnd()
-        .map(|hwnd| unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)).is_ok() })
-        .unwrap_or(false)
-}
-
-#[cfg(not(windows))]
-fn close_window_native(_window: &WebviewWindow) -> bool {
-    false
+fn set_window_system_menu_enabled_native(
+    _window: &WebviewWindow,
+    _enabled: bool,
+) -> Result<(), String> {
+    Ok(())
 }
 
 const FLOAT_NOTE_WIDTH: f64 = 724.0;
@@ -1319,6 +1316,17 @@ fn normalize_shortcut(shortcut: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("+")
+}
+
+fn register_float_note_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String> {
+    app.global_shortcut()
+        .on_shortcut(shortcut, |app, _shortcut, event| {
+            handle_float_note_shortcut(app, event.state());
+        })
+        .map_err(|err| {
+            append_global_log("shortcut", "register_failed", Some(&err.to_string()));
+            err.to_string()
+        })
 }
 
 fn miniapp_window_label(view_key: &str) -> String {
@@ -2039,9 +2047,6 @@ fn miniapps_delete(workspace_path: String, id: String) -> Result<bool, String> {
 #[tauri::command]
 fn window_minimize(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
-        if minimize_window_native(&window) {
-            return Ok(());
-        }
         window.minimize().map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -2050,9 +2055,6 @@ fn window_minimize(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn window_toggle_maximize(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
-        if toggle_maximize_window_native(&window) {
-            return Ok(());
-        }
         if window.is_maximized().map_err(|e| e.to_string())? {
             window.unmaximize().map_err(|e| e.to_string())?;
         } else {
@@ -2065,12 +2067,18 @@ fn window_toggle_maximize(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn window_close(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
-        if close_window_native(&window) {
-            return Ok(());
-        }
         window.close().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[tauri::command]
+fn window_set_system_menu_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    if let Some(window) = app.get_webview_window("main") {
+        set_window_system_menu_enabled_native(&window, enabled)?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 #[tauri::command]
@@ -2142,23 +2150,52 @@ fn float_note_register_shortcut(app: AppHandle, shortcut: String) -> Result<bool
     if let Some(current) = active_shortcut.take() {
         let _ = app.global_shortcut().unregister(current.as_str());
     }
+    let mut suspended_shortcut = state
+        .float_note_suspended_shortcut
+        .lock()
+        .map_err(|_| "failed to lock suspended shortcut state".to_string())?;
+    if let Some(current) = suspended_shortcut.take() {
+        let _ = app.global_shortcut().unregister(current.as_str());
+    }
 
-    let register_result =
-        app.global_shortcut()
-            .on_shortcut(next_shortcut.as_str(), |app, _shortcut, event| {
-                handle_float_note_shortcut(app, event.state());
-            });
-
-    match register_result {
+    match register_float_note_shortcut(&app, next_shortcut.as_str()) {
         Ok(()) => {
             *active_shortcut = Some(next_shortcut);
             Ok(true)
         }
-        Err(err) => {
-            append_global_log("shortcut", "register_failed", Some(&err.to_string()));
-            Ok(false)
-        }
+        Err(_) => Ok(false)
     }
+}
+
+#[tauri::command]
+fn float_note_set_shortcut_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    let state = app.state::<ShortcutStateStore>();
+    let mut active_shortcut = state
+        .float_note_shortcut
+        .lock()
+        .map_err(|_| "failed to lock shortcut state".to_string())?;
+    let mut suspended_shortcut = state
+        .float_note_suspended_shortcut
+        .lock()
+        .map_err(|_| "failed to lock suspended shortcut state".to_string())?;
+
+    if enabled {
+        if active_shortcut.is_some() {
+            return Ok(true);
+        }
+        let Some(shortcut) = suspended_shortcut.take() else {
+            return Ok(true);
+        };
+        register_float_note_shortcut(&app, shortcut.as_str())?;
+        *active_shortcut = Some(shortcut);
+        return Ok(true);
+    }
+
+    if let Some(shortcut) = active_shortcut.take() {
+        let _ = app.global_shortcut().unregister(shortcut.as_str());
+        *suspended_shortcut = Some(shortcut);
+    }
+    Ok(true)
 }
 
 #[tauri::command]
@@ -2439,6 +2476,7 @@ pub fn run() {
             window_minimize,
             window_toggle_maximize,
             window_close,
+            window_set_system_menu_enabled,
             float_note_show,
             float_note_toggle,
             float_note_hide,
@@ -2446,6 +2484,7 @@ pub fn run() {
             float_note_set_height,
             float_note_open_route,
             float_note_register_shortcut,
+            float_note_set_shortcut_enabled,
             system_apps_search,
             system_apps_open,
             miniapp_view_show,

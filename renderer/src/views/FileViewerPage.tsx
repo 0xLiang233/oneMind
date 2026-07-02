@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useReducer, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
 
 type ViewerKind = "image" | "unsupported"
@@ -19,6 +19,68 @@ function inferViewerKind(filePath: string): ViewerKind {
   return imageExtensions.has(getExtension(filePath)) ? "image" : "unsupported"
 }
 
+type ViewerState = {
+  dataUrl: string
+  status: string
+  zoom: number
+  pan: { x: number; y: number }
+}
+
+type ViewerAction =
+  | { type: "reset"; status: string }
+  | { type: "loaded"; dataUrl: string }
+  | { type: "status"; status: string }
+  | { type: "reset-view" }
+  | { type: "zoom"; zoom: number; pan: { x: number; y: number } }
+  | { type: "pan"; pan: { x: number; y: number } }
+
+const initialViewerState: ViewerState = {
+  dataUrl: "",
+  status: "正在加载...",
+  zoom: 1,
+  pan: { x: 0, y: 0 }
+}
+
+function viewerReducer(state: ViewerState, action: ViewerAction): ViewerState {
+  switch (action.type) {
+    case "reset":
+      return {
+        dataUrl: "",
+        status: action.status,
+        zoom: 1,
+        pan: { x: 0, y: 0 }
+      }
+    case "loaded":
+      return {
+        ...state,
+        dataUrl: action.dataUrl,
+        status: ""
+      }
+    case "status":
+      return {
+        ...state,
+        status: action.status
+      }
+    case "reset-view":
+      return {
+        ...state,
+        zoom: 1,
+        pan: { x: 0, y: 0 }
+      }
+    case "zoom":
+      return {
+        ...state,
+        zoom: action.zoom,
+        pan: action.pan
+      }
+    case "pan":
+      return {
+        ...state,
+        pan: action.pan
+      }
+  }
+}
+
 export function FileViewerPage() {
   const [params] = useSearchParams()
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -26,39 +88,32 @@ export function FileViewerPage() {
   const filePath = params.get("path") ?? ""
   const workspacePath = params.get("workspace") ?? undefined
   const kind = useMemo(() => inferViewerKind(filePath), [filePath])
-  const [dataUrl, setDataUrl] = useState("")
-  const [status, setStatus] = useState("正在加载...")
-  const [zoom, setZoom] = useState(1)
-  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [{ dataUrl, status, zoom, pan }, dispatch] = useReducer(viewerReducer, initialViewerState)
 
   function resetView() {
-    setZoom(1)
-    setPan({ x: 0, y: 0 })
+    dispatch({ type: "reset-view" })
   }
 
   useEffect(() => {
     let cancelled = false
-    setDataUrl("")
-    resetView()
     if (!filePath) {
-      setStatus("未选择文件")
+      dispatch({ type: "reset", status: "未选择文件" })
       return
     }
     if (kind !== "image") {
-      setStatus("暂不支持预览此文件类型")
+      dispatch({ type: "reset", status: "暂不支持预览此文件类型" })
       return
     }
 
-    setStatus("正在加载...")
+    dispatch({ type: "reset", status: "正在加载..." })
     void window.oneMind.files.readDataUrl(filePath, workspacePath)
       .then((nextDataUrl) => {
         if (cancelled) return
-        setDataUrl(nextDataUrl)
-        setStatus("")
+        dispatch({ type: "loaded", dataUrl: nextDataUrl })
       })
       .catch((error) => {
         if (cancelled) return
-        setStatus("无法加载图片: " + String(error))
+        dispatch({ type: "status", status: "无法加载图片: " + String(error) })
       })
 
     return () => {
@@ -79,11 +134,14 @@ export function FileViewerPage() {
     const nextZoom = Math.min(6, Math.max(0.25, zoom * factor))
     const ratio = nextZoom / zoom
 
-    setZoom(nextZoom)
-    setPan((current) => ({
-      x: pointX - (pointX - current.x) * ratio,
-      y: pointY - (pointY - current.y) * ratio
-    }))
+    dispatch({
+      type: "zoom",
+      zoom: nextZoom,
+      pan: {
+        x: pointX - (pointX - pan.x) * ratio,
+        y: pointY - (pointY - pan.y) * ratio
+      }
+    })
   }
 
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
@@ -101,9 +159,12 @@ export function FileViewerPage() {
   function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
     const drag = dragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
-    setPan({
-      x: drag.panX + event.clientX - drag.startX,
-      y: drag.panY + event.clientY - drag.startY
+    dispatch({
+      type: "pan",
+      pan: {
+        x: drag.panX + event.clientX - drag.startX,
+        y: drag.panY + event.clientY - drag.startY
+      }
     })
   }
 

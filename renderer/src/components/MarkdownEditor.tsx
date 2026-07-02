@@ -43,6 +43,8 @@ type MermaidDragState = {
 
 export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEditorProps) {
   const parsedDocument = useMemo(() => parseMarkdownDocument(value), [value])
+  const parsedDocumentRef = useRef(parsedDocument)
+  const readonlyRef = useRef(readonly)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const editorRootRef = useRef<HTMLDivElement | null>(null)
   const editorRef = useRef<CrepeBuilder | null>(null)
@@ -93,6 +95,14 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
   }, [onChange])
 
   useEffect(() => {
+    parsedDocumentRef.current = parsedDocument
+  }, [parsedDocument])
+
+  useEffect(() => {
+    readonlyRef.current = readonly
+  }, [readonly])
+
+  useEffect(() => {
     mermaid.initialize({
       startOnLoad: false,
       securityLevel: "strict",
@@ -110,7 +120,7 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
     let disposed = false
     const editor = new CrepeBuilder({
       root,
-      defaultValue: parsedDocument.body
+      defaultValue: parsedDocumentRef.current.body
     }).addFeature(codeMirror, {
       languages,
       extensions: [onemindCodeMirrorTheme],
@@ -141,13 +151,13 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
     editorRef.current = editor
     editor.on((listener) => {
       listener.markdownUpdated((_ctx, markdown) => {
-        onChangeRef.current(mergeMarkdownDocument(parsedDocument.rawProperties, markdown))
+        onChangeRef.current(mergeMarkdownDocument(parsedDocumentRef.current.rawProperties, markdown))
       })
     })
 
     void editor.create().then(() => {
       if (disposed) return
-      editor.setReadonly(readonly)
+      editor.setReadonly(readonlyRef.current)
     })
 
     return () => {
@@ -1062,31 +1072,25 @@ function EditablePropertyValue({
   className?: string
   onCommit: (value: string) => void
 }) {
-  const [draft, setDraft] = useState(value)
-
-  useEffect(() => {
-    setDraft(value)
-  }, [value])
-
   if (readonly) {
     return <span className={className}>{value || "空"}</span>
   }
 
   return (
     <input
+      key={value}
       className={["markdown-property-input", className].filter(Boolean).join(" ")}
-      value={draft}
+      defaultValue={value}
       placeholder="空"
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={() => onCommit(draft.trim())}
+      onBlur={(event) => onCommit(event.currentTarget.value.trim())}
       onKeyDown={(event) => {
         if (event.key === "Enter") {
           event.preventDefault()
-          onCommit(draft.trim())
+          onCommit(event.currentTarget.value.trim())
           event.currentTarget.blur()
         }
         if (event.key === "Escape") {
-          setDraft(value)
+          event.currentTarget.value = value
           event.currentTarget.blur()
         }
       }}

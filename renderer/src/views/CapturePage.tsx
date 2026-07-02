@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useNavigate, useOutletContext } from "react-router-dom"
 
 type OutletContext = {
@@ -70,6 +70,44 @@ export function CapturePage() {
     return groups
   }, [items])
 
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false)
+    setSelectedIds([])
+  }, [])
+
+  const handleConfirmConvert = useCallback(async () => {
+    if (!workspace || !convertDraft) return
+    const name = convertDraft.name.trim()
+    if (!name) { setStatus("请先填写正文笔记名称。"); return }
+    setConvertingId(convertDraft.item.id)
+    try {
+      const filePath = await window.oneMind.notes.createFromQuickNote(
+        workspace.workspacePath, convertDraft.relativeDir, name, convertDraft.item.content
+      )
+      setConvertDraft(null)
+      setStatus("已从随记创建正文笔记。")
+      navigate("/notes?selected=" + encodeURIComponent(filePath))
+    } finally { setConvertingId(null) }
+  }, [convertDraft, navigate, workspace])
+
+  const handleBatchConvert = useCallback(async () => {
+    if (!workspace || !batchConvertItems) return
+    // Convert each selected quick note to a note file
+    for (const item of batchConvertItems) {
+      try {
+        await window.oneMind.notes.createFromQuickNote(
+          workspace.workspacePath, "", buildSuggestedName(item.content), item.content
+        )
+      } catch (e) {
+        console.error("Failed to convert:", item.id, e)
+      }
+    }
+    setBatchConvertItems(null)
+    setItems(prev => prev.filter(n => !batchConvertItems.map(b => b.id).includes(n.id)))
+    setStatus("已批量转为正文笔记。")
+    exitSelectMode()
+  }, [batchConvertItems, exitSelectMode, workspace])
+
   useEffect(() => {
     async function loadQuickNotes() {
       if (!workspace) {
@@ -95,7 +133,7 @@ export function CapturePage() {
     }
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [convertDraft])
+  }, [convertDraft, handleConfirmConvert])
 
   useEffect(() => {
     if (!batchConvertItems) return
@@ -108,7 +146,7 @@ export function CapturePage() {
     }
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [batchConvertItems])
+  }, [batchConvertItems, handleBatchConvert])
 
   // Escape exits select mode
   useEffect(() => {
@@ -119,12 +157,7 @@ export function CapturePage() {
     }
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [selectMode, selectedIds])
-
-  function exitSelectMode() {
-    setSelectMode(false)
-    setSelectedIds([])
-  }
+  }, [exitSelectMode, selectMode, selectedIds])
 
   function toggleSelectItem(id: string) {
     setSelectedIds(prev =>
@@ -155,21 +188,6 @@ export function CapturePage() {
       const directories = await window.oneMind.notes.listDirectories(workspace.workspacePath)
       setDirectoryOptions(directories)
       setConvertDraft({ item, relativeDir: "", name: buildSuggestedName(item.content) })
-    } finally { setConvertingId(null) }
-  }
-
-  async function handleConfirmConvert() {
-    if (!workspace || !convertDraft) return
-    const name = convertDraft.name.trim()
-    if (!name) { setStatus("请先填写正文笔记名称。"); return }
-    setConvertingId(convertDraft.item.id)
-    try {
-      const filePath = await window.oneMind.notes.createFromQuickNote(
-        workspace.workspacePath, convertDraft.relativeDir, name, convertDraft.item.content
-      )
-      setConvertDraft(null)
-      setStatus("已从随记创建正文笔记。")
-      navigate("/notes?selected=" + encodeURIComponent(filePath))
     } finally { setConvertingId(null) }
   }
 
@@ -209,24 +227,6 @@ export function CapturePage() {
       setDirectoryOptions(directories)
       setBatchConvertItems(selectedItems)
     })()
-  }
-
-  async function handleBatchConvert() {
-    if (!workspace || !batchConvertItems) return
-    // Convert each selected quick note to a note file
-    for (const item of batchConvertItems) {
-      try {
-        await window.oneMind.notes.createFromQuickNote(
-          workspace.workspacePath, "", buildSuggestedName(item.content), item.content
-        )
-      } catch (e) {
-        console.error("Failed to convert:", item.id, e)
-      }
-    }
-    setBatchConvertItems(null)
-    setItems(prev => prev.filter(n => !batchConvertItems.map(b => b.id).includes(n.id)))
-    setStatus("已批量转为正文笔记。")
-    exitSelectMode()
   }
 
   return (

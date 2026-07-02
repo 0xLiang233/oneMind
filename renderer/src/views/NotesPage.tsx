@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useLocation, useOutletContext } from "react-router-dom"
 import { MarkdownEditor } from "../components/MarkdownEditor"
 
@@ -67,16 +67,7 @@ export function NotesPage() {
     }
   }, [selectedSidebarPath])
 
-  useEffect(() => {
-    if (!selectedSidebarPath || !isDirty || saving) return
-    setStatus("正在自动保存...")
-    const timer = window.setTimeout(() => {
-      void handleSave()
-    }, 900)
-    return () => window.clearTimeout(timer)
-  }, [content, isDirty, saving, selectedSidebarPath])
-
-  async function handleSave() {
+  const handleSave = useCallback(async () => {
     if (!selectedSidebarPath || saving) return
     setSaving(true)
     try {
@@ -84,6 +75,18 @@ export function NotesPage() {
       setSavedContent(content)
       setStatus("已保存")
     } finally { setSaving(false) }
+  }, [content, saving, selectedSidebarPath])
+
+  useEffect(() => {
+    if (!selectedSidebarPath || !isDirty || saving) return
+    const timer = window.setTimeout(() => {
+      void handleSave()
+    }, 900)
+    return () => window.clearTimeout(timer)
+  }, [handleSave, isDirty, saving, selectedSidebarPath])
+
+  function toggleSourceMode() {
+    setEditorMode((current) => current === "source" ? "rich" : "source")
   }
 
   return (
@@ -108,9 +111,9 @@ export function NotesPage() {
                   <button
                     type="button"
                     className={`notes-more-item ${editorMode === "source" ? "active" : ""}`}
-                    role="menuitemradio"
+                    role="menuitemcheckbox"
                     aria-checked={editorMode === "source"}
-                    onClick={() => setEditorMode("source")}
+                    onClick={toggleSourceMode}
                   >
                     <span className="notes-more-item-label">源码模式</span>
                     <span className="notes-more-check" aria-hidden="true">{editorMode === "source" ? "✓" : ""}</span>

@@ -48,6 +48,7 @@ export function installOneMindBridgeFallback() {
       minimize: () => Promise.resolve(),
       toggleMaximize: () => Promise.resolve(),
       close: () => Promise.resolve(),
+      setSystemMenuEnabled: () => Promise.resolve(false),
       onNavigate: () => () => undefined
     },
     floatNote: {
@@ -58,6 +59,7 @@ export function installOneMindBridgeFallback() {
       setHeight: () => Promise.resolve(false),
       openRoute: () => Promise.resolve(false),
       registerShortcut: () => Promise.resolve(false),
+      setShortcutEnabled: () => Promise.resolve(false),
       onShown: () => () => undefined
     },
     workspace: {
