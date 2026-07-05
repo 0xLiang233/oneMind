@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useOutletContext } from "react-router-dom"
 import { ActivitySettingsPanel } from "./ActivitySettingsPanel"
+import type { LucideIcon } from "../icons"
+import { Activity, FileText, Grid3X3, Info, Settings, Sun } from "../icons"
 
 type OutletContext = {
   workspace: WorkspaceMeta | null
@@ -31,18 +33,18 @@ const accentValues: Array<{ value: AppPreferences["accent"]; label: string }> = 
   { value: "orange", label: "橙色" }
 ]
 
-const navGroups: Array<{ section: string; items: Array<{ key: SettingsGroup; label: string; icon: string }> }> = [
-  { section: "外观", items: [{ key: "appearance", label: "外观", icon: "○" }] },
+const navGroups: Array<{ section: string; items: Array<{ key: SettingsGroup; label: string; icon: LucideIcon }> }> = [
+  { section: "外观", items: [{ key: "appearance", label: "外观", icon: Sun }] },
   {
     section: "通用",
     items: [
-      { key: "general", label: "通用", icon: "☼" },
-      { key: "miniapps", label: "小程序", icon: "▦" },
-      { key: "activity", label: "活跃度", icon: "▥" }
+      { key: "general", label: "通用", icon: Settings },
+      { key: "miniapps", label: "小程序", icon: Grid3X3 },
+      { key: "activity", label: "活跃度", icon: Activity }
     ]
   },
-  { section: "编辑器", items: [{ key: "editor", label: "编辑器", icon: "〉" }] },
-  { section: "关于", items: [{ key: "about", label: "关于", icon: "ⓘ" }] }
+  { section: "编辑器", items: [{ key: "editor", label: "编辑器", icon: FileText }] },
+  { section: "关于", items: [{ key: "about", label: "关于", icon: Info }] }
 ]
 
 function normalizeUrl(value: string) {
@@ -368,17 +370,22 @@ export function SettingsPage() {
           {navGroups.map((group) => (
             <div className="settings-nav-group" key={group.section}>
               <div className="settings-section-label">{group.section}</div>
-              {group.items.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  className={activeGroup === item.key ? "settings-nav-item active" : "settings-nav-item"}
-                  onClick={() => handleGroupChange(item.key)}
-                >
-                  <span className="settings-nav-icon">{item.icon}</span>
-                  {item.label}
-                </button>
-              ))}
+              {group.items.map((item) => {
+                const Icon = item.icon
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={activeGroup === item.key ? "settings-nav-item active" : "settings-nav-item"}
+                    onClick={() => handleGroupChange(item.key)}
+                  >
+                    <span className="settings-nav-icon">
+                      <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
+                    </span>
+                    {item.label}
+                  </button>
+                )
+              })}
               <div className="sidebar-divider" />
             </div>
           ))}

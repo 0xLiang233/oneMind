@@ -2,6 +2,27 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Outlet, useLocation, useNavigate } from "react-router-dom"
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu"
 import { trackActivity } from "../activity"
+import type { LucideIcon } from "../icons"
+import {
+  ChevronRight,
+  FilePlus,
+  FileText,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Grid3X3,
+  Home,
+  Image,
+  MoveRight,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pencil,
+  Search,
+  Settings,
+  Trash2,
+  X,
+  Zap
+} from "../icons"
 
 interface Tab {
   id: string
@@ -45,61 +66,41 @@ const routeLabels: Record<string, string> = {
   "/search": "搜索"
 }
 
-const sidebarIcons = [
+const sidebarIcons: Array<{
+  scene: string
+  accent: "primary" | "secondary"
+  tooltip: string
+  icon: LucideIcon
+}> = [
   {
     scene: "home",
-    accent: "primary" as const,
+    accent: "primary",
     tooltip: "首页",
-    svg: (
-      <svg width="16" height="16" viewBox="0 0 14 14" fill="none">
-        <path d="M2 5L7 2L12 5V11.5H2V5Z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round"/>
-      </svg>
-    )
+    icon: Home
   },
   {
     scene: "capture",
-    accent: "primary" as const,
+    accent: "primary",
     tooltip: "随记",
-    svg: (
-      <svg width="16" height="16" viewBox="0 0 14 14" fill="none">
-        <path d="M8 1L3 8H7L6 13L11 6H7L8 1Z" fill="currentColor" opacity="0.85" stroke="currentColor" strokeWidth="0.5" strokeLinejoin="round"/>
-      </svg>
-    )
+    icon: Zap
   },
   {
     scene: "notes",
-    accent: "primary" as const,
+    accent: "primary",
     tooltip: "笔记",
-    svg: (
-      <svg width="16" height="16" viewBox="0 0 14 14" fill="none">
-        <rect x="2" y="1" width="10" height="12" rx="1.5" stroke="currentColor" strokeWidth="1"/>
-        <path d="M5 4H9M5 6.5H9M5 9H7" stroke="currentColor" strokeWidth="0.8" strokeLinecap="round"/>
-      </svg>
-    )
+    icon: FileText
   },
   {
     scene: "sources",
-    accent: "secondary" as const,
+    accent: "secondary",
     tooltip: "小程序",
-    svg: (
-      <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
-        <rect x="2" y="2" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.7"/>
-        <rect x="10" y="2" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.5"/>
-        <rect x="2" y="10" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.5"/>
-        <rect x="10" y="10" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.3"/>
-      </svg>
-    )
+    icon: Grid3X3
   },
   {
     scene: "settings",
-    accent: "primary" as const,
+    accent: "primary",
     tooltip: "设置",
-    svg: (
-      <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
-        <circle cx="9" cy="9" r="3" stroke="currentColor" strokeWidth="1.3"/>
-        <path d="M9 1.5V3.5M9 14.5V16.5M1.5 9H3.5M14.5 9H16.5M3.7 3.7L5.1 5.1M12.9 12.9L14.3 14.3M14.3 3.7L12.9 5.1M5.1 12.9L3.7 14.3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
-      </svg>
-    )
+    icon: Settings
   }
 ]
 
@@ -123,9 +124,7 @@ function getInitialSidebarWidth() {
 function FolderArrow() {
   return (
     <span className="tree-folder-arrow">
-      <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-        <path d="M2 1L6 4L2 7" fill="currentColor" opacity="0.6"/>
-      </svg>
+      <ChevronRight size={10} strokeWidth={2} aria-hidden="true" />
     </span>
   )
 }
@@ -133,9 +132,7 @@ function FolderArrow() {
 function FolderIcon() {
   return (
     <span className="tree-folder-icon">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <path d="M1 4V11H13V4H7L5 2H1V4Z" fill="currentColor" opacity="0.62"/>
-      </svg>
+      <Folder size={14} strokeWidth={1.7} aria-hidden="true" />
     </span>
   )
 }
@@ -143,10 +140,7 @@ function FolderIcon() {
 function FileIcon() {
   return (
     <span className="tree-file-icon">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <rect x="2" y="1" width="10" height="12" rx="1.5" stroke="currentColor" strokeWidth="1"/>
-        <path d="M5 4H9M5 6.5H9M5 9H7" stroke="currentColor" strokeWidth="0.75" strokeLinecap="round"/>
-      </svg>
+      <FileText size={14} strokeWidth={1.7} aria-hidden="true" />
     </span>
   )
 }
@@ -154,11 +148,7 @@ function FileIcon() {
 function ImageFileIcon() {
   return (
     <span className="tree-file-icon">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <rect x="1.8" y="2.2" width="10.4" height="9.6" rx="1.6" stroke="currentColor" strokeWidth="1.05"/>
-        <path d="M3.5 9.8L5.8 7.1L7.4 8.8L8.7 7.4L11 9.8" stroke="currentColor" strokeWidth="1.05" strokeLinecap="round" strokeLinejoin="round"/>
-        <circle cx="9.6" cy="4.7" r="1" fill="currentColor" opacity="0.72"/>
-      </svg>
+      <Image size={14} strokeWidth={1.7} aria-hidden="true" />
     </span>
   )
 }
@@ -593,20 +583,20 @@ export function AppShell() {
           label: '新建文件夹',
           shortcut: 'Ctrl+Shift+N',
           action: 'new-folder',
-          icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 4V11.5H13V5H7L5.5 3.5H1V4Z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round"/><path d="M7 7V11M5 9H9" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/></svg>
+          icon: <FolderPlus size={14} strokeWidth={1.8} aria-hidden="true" />
         },
         {
           label: '新建笔记',
           shortcut: 'Ctrl+N',
           action: 'new-note',
-          icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="2" y="1" width="10" height="12" rx="1.5" stroke="currentColor" strokeWidth="1.1"/><path d="M7 5V9M5 7H9" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/></svg>
+          icon: <FilePlus size={14} strokeWidth={1.8} aria-hidden="true" />
         }
       ]
 
     const openFolderItem: ContextMenuItem = {
       label: '打开所在目录',
       action: 'open-containing-folder',
-      icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1.5 4.5V11.5H12.5V5.5H7L5.5 3.5H1.5V4.5Z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round"/><path d="M8 8.5H11M9.5 7V10" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round"/></svg>
+      icon: <FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />
     }
 
     if (!nodeType) return [createItems, [openFolderItem]]
@@ -620,21 +610,21 @@ export function AppShell() {
         {
           label: '重命名',
           action: 'rename',
-          icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 10L11 2L12 3L3 12L1 13L2 10Z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round"/></svg>
+          icon: <Pencil size={14} strokeWidth={1.8} aria-hidden="true" />
         },
         {
           label: '删除',
           shortcut: 'Del',
           action: 'delete',
           danger: true,
-          icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 4.5H11M5 4.5V2.5H9V4.5M4 4.5L4.5 12H9.5L10 4.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          icon: <Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />
         }
       ],
       [
         ...(targetIsAssets ? [] : [{
           label: '移动到…',
           action: 'move',
-          icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 7H13M10 4L13 7L10 10" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          icon: <MoveRight size={14} strokeWidth={1.8} aria-hidden="true" />
         }])
       ]
     ]
@@ -770,10 +760,11 @@ export function AppShell() {
             title={sidebarCollapsed ? "展开侧边栏 (Ctrl+\\)" : "收起侧边栏 (Ctrl+\\)"}
           >
             <span className="chrome-sidebar-icon" aria-hidden="true">
-              <svg className="chrome-sidebar-chevron" width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M8 2L4 7L8 12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M10 2L6 7L10 12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" transform="translate(-2,0)"/>
-              </svg>
+              {sidebarCollapsed ? (
+                <PanelLeftOpen className="chrome-sidebar-chevron" size={14} strokeWidth={1.8} aria-hidden="true" />
+              ) : (
+                <PanelLeftClose className="chrome-sidebar-chevron" size={14} strokeWidth={1.8} aria-hidden="true" />
+              )}
             </span>
           </button>
         </div>
@@ -808,7 +799,7 @@ export function AppShell() {
                   }
                 }}
               >
-                ×
+                <X size={12} strokeWidth={2} aria-hidden="true" />
               </span>
             </button>
           ))}
@@ -847,9 +838,7 @@ export function AppShell() {
                 className={location.pathname === "/capture" ? "nav-item nav-item--quick-note active" : "nav-item nav-item--quick-note"}
                 onClick={() => openRoute("/capture")}
               >
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0 }}>
-                  <path d="M8 1L3 8H7L6 13L11 6H7L8 1Z" fill="currentColor" opacity="0.85" stroke="currentColor" strokeWidth="0.5" strokeLinejoin="round"/>
-                </svg>
+                <Zap size={14} strokeWidth={1.8} style={{ flexShrink: 0 }} aria-hidden="true" />
                 <span>随记</span>
               </button>
             </div>
@@ -868,7 +857,7 @@ export function AppShell() {
                     title="搜索笔记"
                     onClick={expandNotesSearch}
                   >
-                    <span aria-hidden="true" />
+                    <Search size={13} strokeWidth={1.8} aria-hidden="true" />
                   </button>
                   <input
                     ref={notesSearchRef}
@@ -912,12 +901,7 @@ export function AppShell() {
                 className={location.pathname === "/sources" ? "nav-item active" : "nav-item"}
                 onClick={() => openRoute("/sources")}
               >
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" style={{ flexShrink: 0 }}>
-                  <rect x="2" y="2" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.7"/>
-                  <rect x="10" y="2" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.5"/>
-                  <rect x="2" y="10" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.5"/>
-                  <rect x="10" y="10" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.3"/>
-                </svg>
+                <Grid3X3 size={18} strokeWidth={1.8} style={{ flexShrink: 0 }} aria-hidden="true" />
                 <span>小程序</span>
               </button>
               <button
@@ -925,10 +909,7 @@ export function AppShell() {
                 className={location.pathname === "/settings" ? "nav-item active" : "nav-item"}
                 onClick={() => openRoute("/settings")}
               >
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" style={{ flexShrink: 0 }}>
-                  <circle cx="9" cy="9" r="3" stroke="currentColor" strokeWidth="1.3"/>
-                  <path d="M9 1.5V3.5M9 14.5V16.5M1.5 9H3.5M14.5 9H16.5M3.7 3.7L5.1 5.1M12.9 12.9L14.3 14.3M14.3 3.7L12.9 5.1M5.1 12.9L3.7 14.3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
-                </svg>
+                <Settings size={18} strokeWidth={1.8} style={{ flexShrink: 0 }} aria-hidden="true" />
                 <span>设置</span>
               </button>
 
@@ -940,6 +921,7 @@ export function AppShell() {
           <div className="sidebar-collapsed-bar">
             {sidebarIcons.map(item => {
               const isActive = location.pathname === "/" + item.scene || (item.scene === "home" && location.pathname === "/home")
+              const Icon = item.icon
               return (
                 <button
                   key={item.scene}
@@ -950,7 +932,7 @@ export function AppShell() {
                   aria-label={item.tooltip}
                   onClick={() => switchScene(item.scene)}
                 >
-                  {item.svg}
+                  <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
                 </button>
               )
             })}

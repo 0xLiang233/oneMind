@@ -3526,33 +3526,10 @@ button:disabled { opacity: 0.5; cursor: default; }
   background: transparent;
   color: var(--color-text-secondary);
 }
-.sidebar-search-trigger span {
-  position: relative;
+.sidebar-search-trigger svg {
   width: 13px;
   height: 13px;
   display: block;
-}
-.sidebar-search-trigger span::before {
-  content: "";
-  position: absolute;
-  left: 1px;
-  top: 1px;
-  width: 7px;
-  height: 7px;
-  border: 1.5px solid currentColor;
-  border-radius: 50%;
-}
-.sidebar-search-trigger span::after {
-  content: "";
-  position: absolute;
-  left: 8px;
-  top: 9px;
-  width: 5px;
-  height: 1.5px;
-  border-radius: 999px;
-  background: currentColor;
-  transform: rotate(45deg);
-  transform-origin: left center;
 }
 .sidebar-notes-tree-surface {
   flex: 1 1 auto;

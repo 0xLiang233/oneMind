@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { trackActivity } from "../activity"
+import { Check, PenLine, Search } from "../icons"
 
 type FloatMode = "quick" | "tools"
 type SaveState = "idle" | "saving" | "saved"
@@ -42,21 +43,11 @@ const FLOAT_MAX_WINDOW_HEIGHT = 560
 const FLOAT_WINDOW_HEIGHT_BUFFER = 2
 
 function QuickModeIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-      <path d="M5 15.8L4.2 18.6L7 17.8L16.7 8.1C17.3 7.5 17.3 6.5 16.7 5.9L16.1 5.3C15.5 4.7 14.5 4.7 13.9 5.3L5 14.2V15.8Z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M12.8 6.4L15.6 9.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  )
+  return <PenLine size={22} strokeWidth={1.8} aria-hidden="true" />
 }
 
 function ToolsModeIcon() {
-  return (
-    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-      <circle cx="9.5" cy="9.5" r="5.8" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M14 14L18.2 18.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  )
+  return <Search size={22} strokeWidth={1.8} aria-hidden="true" />
 }
 
 export function FloatNotePage() {
@@ -589,9 +580,7 @@ export function FloatNotePage() {
           {mode === "quick" && saveState !== "idle" ? (
             <span className={"float-note-save-indicator " + saveState} aria-label={saveState === "saving" ? "保存中" : "已保存"}>
               {saveState === "saving" ? null : (
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <path d="M3 7.2L5.8 10L11 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
+                <Check size={14} strokeWidth={2} aria-hidden="true" />
               )}
             </span>
           ) : null}
