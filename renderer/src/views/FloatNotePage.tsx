@@ -164,10 +164,14 @@ export function FloatNotePage() {
   function resizeQuickInput(text = value) {
     const input = inputRef.current
     if (!input) return QUICK_INPUT_MIN_HEIGHT
-    const inputHeight = getQuickInputHeight(text)
+    input.style.height = "auto"
+    const visualHeight = getQuickInputHeight(text)
+    const measuredHeight = Math.ceil(input.scrollHeight)
+    const inputHeight = Math.max(visualHeight, measuredHeight)
     input.style.height = `${inputHeight}px`
-    input.style.overflowY = getVisualLineCount(text) > QUICK_INPUT_MAX_LINES ? "auto" : "hidden"
-    input.scrollTop = input.scrollHeight
+    const shouldScroll = getVisualLineCount(text) > QUICK_INPUT_MAX_LINES
+    input.style.overflowY = shouldScroll ? "auto" : "hidden"
+    input.scrollTop = shouldScroll ? input.scrollHeight : 0
     return inputHeight
   }
 
