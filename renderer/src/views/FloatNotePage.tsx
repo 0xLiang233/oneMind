@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { trackActivity } from "../activity"
 
 type FloatMode = "quick" | "tools"
 type SaveState = "idle" | "saving" | "saved"
@@ -82,6 +83,7 @@ export function FloatNotePage() {
   const requestInputFocusRef = useRef<() => void>(() => undefined)
   const syncPanelHeightRef = useRef<() => void>(() => undefined)
   const resetPaletteRef = useRef<() => void>(() => undefined)
+  const workspacePathRef = useRef("")
 
   function getFocusSnapshot(stage: string) {
     const input = inputRef.current
@@ -320,6 +322,12 @@ export function FloatNotePage() {
       if (reason === "shown") {
         invalidateWindowHeightCache()
         resetPaletteRef.current()
+        trackActivity(workspacePathRef.current, {
+          module: "floatTool",
+          action: "show",
+          targetType: "panel",
+          targetLabel: "浮动工具"
+        })
       }
       window.requestAnimationFrame(() => {
         if (reason === "shown") {
@@ -388,6 +396,7 @@ export function FloatNotePage() {
     requestInputFocusRef.current = requestInputFocus
     syncPanelHeightRef.current = syncPanelHeight
     resetPaletteRef.current = resetPalette
+    workspacePathRef.current = workspace?.workspacePath ?? ""
   })
 
   useLayoutEffect(() => {
@@ -448,6 +457,12 @@ export function FloatNotePage() {
     const activeWorkspace = workspace ?? await window.oneMind.workspace.initDefault()
     setWorkspace(activeWorkspace)
     await window.oneMind.quickNotes.create(activeWorkspace.workspacePath, content)
+    trackActivity(activeWorkspace.workspacePath, {
+      module: "quickNote",
+      action: "create",
+      targetType: "quickNote",
+      targetLabel: content.slice(0, 24) || "快速记录"
+    })
     setSaveState("saved")
     setStatus("已保存")
     if (closeAfterSave) {
@@ -469,6 +484,13 @@ export function FloatNotePage() {
     if (!result || !workspace) return
     if (result.type === "app") {
       await window.oneMind.systemApps.open(workspace.workspacePath, result.app)
+      trackActivity(workspace.workspacePath, {
+        module: "systemApp",
+        action: "open",
+        targetType: "app",
+        targetId: result.app.path,
+        targetLabel: result.app.name
+      })
       return
     }
     if (!result.command.route) return

@@ -8,7 +8,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::{
     env,
     fs::{self, OpenOptions},
-    io::Write,
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::Mutex,
@@ -137,6 +137,81 @@ struct SystemAppEntry {
     icon: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_used_at: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ActivityEvent {
+    id: String,
+    kind: String,
+    module: String,
+    action: String,
+    occurred_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ended_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target_label: Option<String>,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    metadata: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivityEventInput {
+    #[serde(default)]
+    kind: Option<String>,
+    module: String,
+    action: String,
+    #[serde(default)]
+    occurred_at: Option<String>,
+    #[serde(default)]
+    started_at: Option<String>,
+    #[serde(default)]
+    ended_at: Option<String>,
+    #[serde(default)]
+    target_type: Option<String>,
+    #[serde(default)]
+    target_id: Option<String>,
+    #[serde(default)]
+    target_label: Option<String>,
+    #[serde(default)]
+    metadata: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivityDaySummary {
+    date: String,
+    count: u32,
+    score: u32,
+    module_counts: std::collections::BTreeMap<String, u32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivityTotals {
+    total_events: u32,
+    active_days: u32,
+    current_streak_days: u32,
+    module_counts: std::collections::BTreeMap<String, u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_active_at: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivityReport {
+    start_date: String,
+    end_date: String,
+    days: Vec<ActivityDaySummary>,
+    events: Vec<ActivityEvent>,
+    totals: ActivityTotals,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -1024,6 +1099,191 @@ fn record_system_app_recent(
     recents.insert(0, next_entry);
     recents.truncate(12);
     write_system_app_recents(workspace_path, &recents)
+}
+
+fn get_activity_dir(workspace_path: &str) -> Result<PathBuf, String> {
+    let activity_dir = Path::new(workspace_path).join(".onemind").join("activity");
+    fs::create_dir_all(&activity_dir).map_err(|e| e.to_string())?;
+    Ok(activity_dir)
+}
+
+fn activity_month_from_timestamp(value: &str) -> String {
+    value.get(0..7).unwrap_or("unknown").to_string()
+}
+
+fn activity_date_from_timestamp(value: &str) -> Option<String> {
+    value.get(0..10).map(|date| date.to_string())
+}
+
+fn normalize_activity_event(input: ActivityEventInput, index: usize) -> ActivityEvent {
+    let occurred_at = input.occurred_at.unwrap_or_else(now_iso_like);
+    ActivityEvent {
+        id: format!("activity-{}-{}", now_id(), index),
+        kind: input.kind.unwrap_or_else(|| "instant".to_string()),
+        module: input.module,
+        action: input.action,
+        occurred_at,
+        started_at: input.started_at,
+        ended_at: input.ended_at,
+        target_type: input.target_type,
+        target_id: input.target_id,
+        target_label: input.target_label,
+        metadata: input.metadata,
+    }
+}
+
+fn append_activity_events_file(
+    workspace_path: &str,
+    events: Vec<ActivityEvent>,
+) -> Result<usize, String> {
+    if events.is_empty() {
+        return Ok(0);
+    }
+
+    let activity_dir = get_activity_dir(workspace_path)?;
+    let mut events_by_month: std::collections::BTreeMap<String, Vec<ActivityEvent>> =
+        std::collections::BTreeMap::new();
+    for event in events {
+        events_by_month
+            .entry(activity_month_from_timestamp(&event.occurred_at))
+            .or_default()
+            .push(event);
+    }
+
+    let mut written = 0usize;
+    for (month, month_events) in events_by_month {
+        let file_path = activity_dir.join(format!("events-{month}.jsonl"));
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file_path)
+            .map_err(|e| e.to_string())?;
+        for event in month_events {
+            let line = serde_json::to_string(&event).map_err(|e| e.to_string())?;
+            file.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+            file.write_all(b"\n").map_err(|e| e.to_string())?;
+            written += 1;
+        }
+    }
+
+    Ok(written)
+}
+
+fn activity_event_score(event: &ActivityEvent) -> u32 {
+    if event.kind == "session" {
+        let count = event
+            .metadata
+            .get("eventCount")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(1);
+        return 1 + (count.min(4) as u32);
+    }
+    1
+}
+
+fn read_activity_events_in_range(
+    workspace_path: &str,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Vec<ActivityEvent>, String> {
+    let activity_dir = get_activity_dir(workspace_path)?;
+    let mut events = Vec::new();
+    let Ok(entries) = fs::read_dir(activity_dir) else {
+        return Ok(events);
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|name| name.starts_with("events-") && name.ends_with(".jsonl"))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        let Ok(file) = fs::File::open(path) else {
+            continue;
+        };
+        let reader = BufReader::new(file);
+        for line in reader.lines().map_while(Result::ok) {
+            let Ok(event) = serde_json::from_str::<ActivityEvent>(&line) else {
+                continue;
+            };
+            let Some(date) = activity_date_from_timestamp(&event.occurred_at) else {
+                continue;
+            };
+            if date.as_str() >= start_date && date.as_str() <= end_date {
+                events.push(event);
+            }
+        }
+    }
+
+    events.sort_by(|left, right| left.occurred_at.cmp(&right.occurred_at));
+    Ok(events)
+}
+
+fn build_activity_report(
+    workspace_path: &str,
+    start_date: &str,
+    end_date: &str,
+) -> Result<ActivityReport, String> {
+    let events = read_activity_events_in_range(workspace_path, start_date, end_date)?;
+    let mut days: std::collections::BTreeMap<String, ActivityDaySummary> =
+        std::collections::BTreeMap::new();
+    let mut module_counts = std::collections::BTreeMap::<String, u32>::new();
+    let mut last_active_at = None;
+
+    for event in &events {
+        let Some(date) = activity_date_from_timestamp(&event.occurred_at) else {
+            continue;
+        };
+        let score = activity_event_score(event);
+        let day = days.entry(date.clone()).or_insert_with(|| ActivityDaySummary {
+            date,
+            count: 0,
+            score: 0,
+            module_counts: std::collections::BTreeMap::new(),
+        });
+        day.count += 1;
+        day.score += score;
+        *day.module_counts.entry(event.module.clone()).or_insert(0) += 1;
+        *module_counts.entry(event.module.clone()).or_insert(0) += 1;
+        last_active_at = Some(event.occurred_at.clone());
+    }
+
+    let end = chrono::NaiveDate::parse_from_str(end_date, "%Y-%m-%d").ok();
+    let mut streak = 0u32;
+    if let Some(mut cursor) = end {
+        loop {
+            let key = cursor.format("%Y-%m-%d").to_string();
+            if !days.contains_key(&key) {
+                break;
+            }
+            streak += 1;
+            let Some(previous) = cursor.pred_opt() else {
+                break;
+            };
+            cursor = previous;
+        }
+    }
+
+    let totals = ActivityTotals {
+        total_events: events.len() as u32,
+        active_days: days.len() as u32,
+        current_streak_days: streak,
+        module_counts,
+        last_active_at,
+    };
+
+    Ok(ActivityReport {
+        start_date: start_date.to_string(),
+        end_date: end_date.to_string(),
+        days: days.into_values().collect(),
+        events,
+        totals,
+    })
 }
 
 fn get_preferences_file(workspace_path: &str) -> Result<PathBuf, String> {
@@ -2451,6 +2711,26 @@ fn preferences_write(
 }
 
 #[tauri::command]
+fn activity_append(workspace_path: String, events: Vec<ActivityEventInput>) -> Result<usize, String> {
+    let normalized = events
+        .into_iter()
+        .enumerate()
+        .filter(|(_, event)| !event.module.trim().is_empty() && !event.action.trim().is_empty())
+        .map(|(index, event)| normalize_activity_event(event, index))
+        .collect::<Vec<_>>();
+    append_activity_events_file(&workspace_path, normalized)
+}
+
+#[tauri::command]
+fn activity_report(
+    workspace_path: String,
+    start_date: String,
+    end_date: String,
+) -> Result<ActivityReport, String> {
+    build_activity_report(&workspace_path, &start_date, &end_date)
+}
+
+#[tauri::command]
 fn miniapps_list(workspace_path: String) -> Result<Vec<MiniappSource>, String> {
     read_miniapps_file(&workspace_path)
 }
@@ -2985,6 +3265,8 @@ pub fn run() {
             quick_notes_delete,
             preferences_read,
             preferences_write,
+            activity_append,
+            activity_report,
             miniapps_list,
             miniapps_create,
             miniapps_update,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Outlet, useLocation, useNavigate } from "react-router-dom"
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu"
+import { trackActivity } from "../activity"
 
 interface Tab {
   id: string
@@ -1001,10 +1002,24 @@ export function AppShell() {
                         const dirPath = createDialog.dirPath
                         if (createDialog.type === "file") {
                           const filePath = await window.oneMind.notes.createFile(ws.workspacePath, dirPath, nameInput)
+                          trackActivity(ws.workspacePath, {
+                            module: "notes",
+                            action: "create",
+                            targetType: "note",
+                            targetId: filePath,
+                            targetLabel: nameInput
+                          })
                           setSelectedSidebarPath(filePath)
                           navigate("/notes?selected=" + encodeURIComponent(filePath))
                         } else {
-                          await window.oneMind.notes.createFolder(ws.workspacePath, dirPath, nameInput)
+                          const folderPath = await window.oneMind.notes.createFolder(ws.workspacePath, dirPath, nameInput)
+                          trackActivity(ws.workspacePath, {
+                            module: "notes",
+                            action: "create",
+                            targetType: "folder",
+                            targetId: folderPath,
+                            targetLabel: nameInput
+                          })
                         }
                         setCreateDialog(null)
                         setNameInput('')
@@ -1024,10 +1039,24 @@ export function AppShell() {
                   const dirPath = createDialog.dirPath
                   if (createDialog.type === "file") {
                     const filePath = await window.oneMind.notes.createFile(ws.workspacePath, dirPath, nameInput)
+                    trackActivity(ws.workspacePath, {
+                      module: "notes",
+                      action: "create",
+                      targetType: "note",
+                      targetId: filePath,
+                      targetLabel: nameInput
+                    })
                     setSelectedSidebarPath(filePath)
                     navigate("/notes?selected=" + encodeURIComponent(filePath))
                   } else {
-                    await window.oneMind.notes.createFolder(ws.workspacePath, dirPath, nameInput)
+                    const folderPath = await window.oneMind.notes.createFolder(ws.workspacePath, dirPath, nameInput)
+                    trackActivity(ws.workspacePath, {
+                      module: "notes",
+                      action: "create",
+                      targetType: "folder",
+                      targetId: folderPath,
+                      targetLabel: nameInput
+                    })
                   }
                   setCreateDialog(null)
                   setNameInput('')

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useNavigate, useOutletContext } from "react-router-dom"
+import { trackActivity } from "../activity"
 
 type OutletContext = {
   workspace: WorkspaceMeta | null
@@ -84,6 +85,13 @@ export function CapturePage() {
       const filePath = await window.oneMind.notes.createFromQuickNote(
         workspace.workspacePath, convertDraft.relativeDir, name, convertDraft.item.content
       )
+      trackActivity(workspace.workspacePath, {
+        module: "quickNote",
+        action: "convert",
+        targetType: "note",
+        targetId: filePath,
+        targetLabel: name
+      })
       setConvertDraft(null)
       setStatus("已从随记创建正文笔记。")
       navigate("/notes?selected=" + encodeURIComponent(filePath))
@@ -93,14 +101,25 @@ export function CapturePage() {
   const handleBatchConvert = useCallback(async () => {
     if (!workspace || !batchConvertItems) return
     // Convert each selected quick note to a note file
+    let convertedCount = 0
     for (const item of batchConvertItems) {
       try {
         await window.oneMind.notes.createFromQuickNote(
           workspace.workspacePath, "", buildSuggestedName(item.content), item.content
         )
+        convertedCount += 1
       } catch (e) {
         console.error("Failed to convert:", item.id, e)
       }
+    }
+    if (convertedCount > 0) {
+      trackActivity(workspace.workspacePath, {
+        module: "quickNote",
+        action: "convert",
+        targetType: "note",
+        targetLabel: `批量转正文 ${convertedCount} 条`,
+        metadata: { count: convertedCount }
+      })
     }
     setBatchConvertItems(null)
     setItems(prev => prev.filter(n => !batchConvertItems.map(b => b.id).includes(n.id)))
@@ -175,6 +194,13 @@ export function CapturePage() {
     setSaving(true)
     try {
       const created = await window.oneMind.quickNotes.create(workspace.workspacePath, content)
+      trackActivity(workspace.workspacePath, {
+        module: "quickNote",
+        action: "create",
+        targetType: "quickNote",
+        targetId: created.id,
+        targetLabel: content.split("\n")[0].trim().slice(0, 32) || "随记"
+      })
       setItems(current => [created, ...current])
       setContent("")
       setStatus("随记已保存到 inbox。")

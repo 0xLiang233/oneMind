@@ -101,6 +101,11 @@ export function createTauriBridge(): Window["oneMind"] {
       write: (workspacePath, preferences) =>
         invoke<AppPreferences>("preferences_write", { workspacePath, preferences })
     },
+    activity: {
+      append: (workspacePath, events) => invoke<number>("activity_append", { workspacePath, events }),
+      report: (workspacePath, startDate, endDate) =>
+        invoke<ActivityReport>("activity_report", { workspacePath, startDate, endDate })
+    },
     systemApps: {
       search: async (workspacePath, query) => {
         return invoke<SystemAppEntry[]>("system_apps_search", { workspacePath, query })

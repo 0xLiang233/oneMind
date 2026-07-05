@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useLocation, useOutletContext } from "react-router-dom"
 import { MarkdownEditor } from "../components/MarkdownEditor"
+import { trackActivity } from "../activity"
 
 type OutletContext = {
   workspace: WorkspaceMeta | null
@@ -9,7 +10,7 @@ type OutletContext = {
 }
 
 export function NotesPage() {
-  const { selectedSidebarPath, setSelectedSidebarPath } = useOutletContext<OutletContext>()
+  const { workspace, selectedSidebarPath, setSelectedSidebarPath } = useOutletContext<OutletContext>()
   const location = useLocation()
   const [content, setContent] = useState("")
   const [savedContent, setSavedContent] = useState("")
@@ -53,6 +54,13 @@ export function NotesPage() {
         setSavedContent(next)
         setLoadedPath(selectedSidebarPath)
         setStatus("已加载")
+        trackActivity(workspace?.workspacePath, {
+          module: "notes",
+          action: "open",
+          targetType: "note",
+          targetId: selectedSidebarPath,
+          targetLabel: selectedSidebarPath.split(/[/\\]/).pop() || selectedSidebarPath
+        })
       } catch (e) {
         if (cancelled) return
         setContent("")
@@ -65,7 +73,7 @@ export function NotesPage() {
     return () => {
       cancelled = true
     }
-  }, [selectedSidebarPath])
+  }, [selectedSidebarPath, workspace?.workspacePath])
 
   const handleSave = useCallback(async () => {
     if (!selectedSidebarPath || saving) return
@@ -74,8 +82,15 @@ export function NotesPage() {
       await window.oneMind.notes.write(selectedSidebarPath, content)
       setSavedContent(content)
       setStatus("已保存")
+      trackActivity(workspace?.workspacePath, {
+        module: "notes",
+        action: "save",
+        targetType: "note",
+        targetId: selectedSidebarPath,
+        targetLabel: selectedName
+      })
     } finally { setSaving(false) }
-  }, [content, saving, selectedSidebarPath])
+  }, [content, saving, selectedName, selectedSidebarPath, workspace?.workspacePath])
 
   useEffect(() => {
     if (!selectedSidebarPath || !isDirty || saving) return

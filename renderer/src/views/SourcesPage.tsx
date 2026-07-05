@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useOutletContext } from 'react-router-dom'
+import { trackActivity } from '../activity'
 
 type OutletContext = {
   workspace: WorkspaceMeta | null
@@ -110,6 +111,13 @@ export function SourcesPage() {
       url: source.url
     })
     navigate(`/sources?${nextParams.toString()}`)
+    trackActivity(workspace?.workspacePath, {
+      module: "miniapp",
+      action: "open",
+      targetType: "miniapp",
+      targetId: source.id,
+      targetLabel: source.name
+    })
   }
 
   function getSourceDomain(url: string) {

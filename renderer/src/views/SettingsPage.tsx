@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useOutletContext } from "react-router-dom"
+import { ActivitySettingsPanel } from "./ActivitySettingsPanel"
 
 type OutletContext = {
   workspace: WorkspaceMeta | null
@@ -10,7 +11,7 @@ type OutletContext = {
   handleSelectWorkspace?: () => Promise<void>
 }
 
-type SettingsGroup = "appearance" | "general" | "miniapps" | "editor" | "about"
+type SettingsGroup = "appearance" | "general" | "miniapps" | "activity" | "editor" | "about"
 
 const defaultPreferences: AppPreferences = {
   theme: "system",
@@ -36,7 +37,8 @@ const navGroups: Array<{ section: string; items: Array<{ key: SettingsGroup; lab
     section: "通用",
     items: [
       { key: "general", label: "通用", icon: "☼" },
-      { key: "miniapps", label: "小程序", icon: "▦" }
+      { key: "miniapps", label: "小程序", icon: "▦" },
+      { key: "activity", label: "活跃度", icon: "▥" }
     ]
   },
   { section: "编辑器", items: [{ key: "editor", label: "编辑器", icon: "〉" }] },
@@ -597,6 +599,14 @@ export function SettingsPage() {
                 {miniapps.length === 0 ? <div className="settings-empty">暂无小程序入口。</div> : null}
               </div>
             </>
+          ) : null}
+
+          {activeGroup === "activity" ? (
+            workspacePath ? (
+              <ActivitySettingsPanel workspacePath={workspacePath} />
+            ) : (
+              <div className="settings-empty">创建或选择工作区后即可查看活跃度。</div>
+            )
           ) : null}
 
           {activeGroup === "editor" ? (

@@ -75,6 +75,48 @@ type DebugModeReport = {
   source: string
 }
 
+type ActivityEventInput = {
+  kind?: 'instant' | 'session'
+  module: string
+  action: string
+  occurredAt?: string
+  startedAt?: string
+  endedAt?: string
+  targetType?: string
+  targetId?: string
+  targetLabel?: string
+  metadata?: Record<string, unknown>
+}
+
+type ActivityEvent = ActivityEventInput & {
+  id: string
+  kind: 'instant' | 'session'
+  occurredAt: string
+}
+
+type ActivityDaySummary = {
+  date: string
+  count: number
+  score: number
+  moduleCounts: Record<string, number>
+}
+
+type ActivityTotals = {
+  totalEvents: number
+  activeDays: number
+  currentStreakDays: number
+  moduleCounts: Record<string, number>
+  lastActiveAt?: string
+}
+
+type ActivityReport = {
+  startDate: string
+  endDate: string
+  days: ActivityDaySummary[]
+  events: ActivityEvent[]
+  totals: ActivityTotals
+}
+
 interface Window {
   oneMind: {
     runtime?: {
@@ -140,6 +182,10 @@ interface Window {
     preferences: {
       read: (workspacePath: string) => Promise<AppPreferences>
       write: (workspacePath: string, preferences: AppPreferences) => Promise<AppPreferences>
+    }
+    activity: {
+      append: (workspacePath: string, events: ActivityEventInput[]) => Promise<number>
+      report: (workspacePath: string, startDate: string, endDate: string) => Promise<ActivityReport>
     }
     systemApps: {
       search: (workspacePath: string, query: string) => Promise<SystemAppEntry[]>

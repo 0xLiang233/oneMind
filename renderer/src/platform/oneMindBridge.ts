@@ -99,6 +99,21 @@ export function installOneMindBridgeFallback() {
       read: () => Promise.resolve(unsupportedPreferences),
       write: (_workspacePath, preferences) => Promise.resolve(preferences)
     },
+    activity: {
+      append: () => Promise.resolve(0),
+      report: (_workspacePath, startDate, endDate) => Promise.resolve({
+        startDate,
+        endDate,
+        days: [],
+        events: [],
+        totals: {
+          totalEvents: 0,
+          activeDays: 0,
+          currentStreakDays: 0,
+          moduleCounts: {}
+        }
+      })
+    },
     systemApps: {
       search: () => Promise.resolve([]),
       open: () => Promise.resolve(false)
