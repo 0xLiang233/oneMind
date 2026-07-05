@@ -2,6 +2,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use windows::core::Interface;
+mod float_note_focus;
 use std::{
     env,
     fs::{self, OpenOptions},
@@ -32,17 +33,14 @@ use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
 #[cfg(windows)]
 use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ};
 #[cfg(windows)]
-use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus as SetWin32Focus;
-#[cfg(windows)]
 use windows::Win32::UI::Shell::{
     IShellLinkW, SHGetFileInfoW, SHGFI_ICON, SHGFI_LARGEICON, SHGFI_SMALLICON, SHFILEINFOW,
     ShellLink,
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, DestroyIcon, DrawIconEx, GetWindowLongPtrW, SetForegroundWindow,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, DI_NORMAL, GWL_STYLE, SWP_FRAMECHANGED,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOW, WS_SYSMENU,
+    DestroyIcon, DrawIconEx, GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, DI_NORMAL,
+    GWL_STYLE, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_SYSMENU,
 };
 
 #[derive(Serialize)]
@@ -159,6 +157,7 @@ struct ShortcutStateStore {
     float_note_suspended_shortcut: Mutex<Option<String>>,
     float_note_is_pressed: Mutex<bool>,
     float_note_last_press: Mutex<Option<Instant>>,
+    float_note_last_activation: Mutex<Option<Instant>>,
 }
 
 struct ResolvedSystemApp {
@@ -959,29 +958,61 @@ fn ensure_float_note_window(app: &AppHandle) -> Result<WebviewWindow, String> {
                 "float_note_window_event_focused",
                 Some("focused=true"),
             );
-            let _ = focus_window.emit("float-note-focus-ready", ());
-            append_debug_log(
+            request_float_note_renderer_focus(
                 &focus_window.app_handle(),
-                "float_note_emit_focus_ready",
-                Some("source=window_event"),
+                &focus_window,
+                "window_event",
             );
         } else if matches!(event, WindowEvent::Focused(false)) {
+            let app_handle = focus_window.app_handle().clone();
+            let blur_window = focus_window.clone();
             append_debug_log(
-                &focus_window.app_handle(),
+                &app_handle,
                 "float_note_window_event_focused",
                 Some("focused=false"),
             );
-            append_debug_log(
-                &focus_window.app_handle(),
-                "float_note_close_start",
-                Some("source=blur"),
-            );
-            let _ = focus_window.close();
-            append_debug_log(
-                &focus_window.app_handle(),
-                "float_note_close_done",
-                Some("source=blur"),
-            );
+            tauri::async_runtime::spawn(async move {
+                std::thread::sleep(std::time::Duration::from_millis(FLOAT_NOTE_BLUR_HIDE_DELAY_MS));
+                append_float_note_window_snapshot(&app_handle, &blur_window, "blur_delayed");
+                if !blur_window.is_visible().unwrap_or(false) {
+                    append_debug_log(
+                        &app_handle,
+                        "float_note_hide_ignored",
+                        Some("source=blur reason=hidden"),
+                    );
+                    return;
+                }
+                if is_float_note_recently_activated(&app_handle) {
+                    append_debug_log(
+                        &app_handle,
+                        "float_note_hide_ignored",
+                        Some("source=blur reason=activation_grace"),
+                    );
+                    return;
+                }
+                if blur_window.is_focused().unwrap_or(false) {
+                    append_debug_log(
+                        &app_handle,
+                        "float_note_hide_ignored",
+                        Some("source=blur reason=refocused"),
+                    );
+                    return;
+                }
+                if is_cursor_inside_window(&app_handle, &blur_window).unwrap_or(false) {
+                    append_debug_log(
+                        &app_handle,
+                        "float_note_hide_ignored",
+                        Some("source=blur reason=cursor_inside"),
+                    );
+                    mark_float_note_activation(&app_handle, "blur_cursor_inside");
+                    let _ = blur_window.set_focus();
+                    activate_float_note_window_native(&app_handle, &blur_window, "blur_cursor_inside");
+                    request_float_note_renderer_focus(&app_handle, &blur_window, "blur_cursor_inside");
+                    focus_float_note_input(&app_handle, &blur_window, "blur_cursor_inside");
+                    return;
+                }
+                let _ = hide_float_note_window(&app_handle, &blur_window, "blur_outside");
+            });
         }
     });
 
@@ -995,7 +1026,6 @@ fn focus_float_note_input(app: &AppHandle, window: &WebviewWindow, source: &str)
   const input = document.querySelector('.float-note-text-input');
   if (!input || input.disabled) return false;
   window.focus();
-  input.blur();
   input.focus({ preventScroll: true });
   const end = input.value.length;
   input.setSelectionRange(end, end);
@@ -1018,17 +1048,39 @@ fn focus_float_note_input(app: &AppHandle, window: &WebviewWindow, source: &str)
 
 #[cfg(windows)]
 fn activate_float_note_window_native(app: &AppHandle, window: &WebviewWindow, source: &str) {
-    match window.hwnd() {
-        Ok(hwnd) => unsafe {
-            let _ = ShowWindow(hwnd, SW_SHOW);
-            let _ = BringWindowToTop(hwnd);
-            let foreground_result = SetForegroundWindow(hwnd).as_bool();
-            let focus_result = SetWin32Focus(Some(hwnd)).is_ok();
+    match float_note_focus::activate_window(window) {
+        Ok(report) => {
+            let child_context = match report.child_focus.result {
+                Some(result) => format!(
+                    "source={source} result={result} target_thread={} attached_target={} children={}",
+                    report.child_focus.target_thread.unwrap_or(0),
+                    report.child_focus.attached_target.unwrap_or(false),
+                    report.child_focus.children
+                ),
+                None => format!(
+                    "source={source} result=missing children={}",
+                    report.child_focus.children
+                ),
+            };
+            append_debug_log(
+                app,
+                "float_note_webview_child_focus",
+                Some(&child_context),
+            );
             append_debug_log(
                 app,
                 "float_note_native_activate",
                 Some(&format!(
-                    "source={source} foreground={foreground_result} focus={focus_result}"
+                    "source={source} foreground={foreground_result} focus={focus_result} child_focus={child_focus_result} foreground_match={} current_thread={} foreground_thread={} window_thread={} attached_foreground={} attached_window={}",
+                    report.foreground_match,
+                    report.current_thread,
+                    report.foreground_thread,
+                    report.window_thread,
+                    report.attached_foreground,
+                    report.attached_window,
+                    foreground_result = report.foreground_result,
+                    focus_result = report.focus_result,
+                    child_focus_result = report.child_focus_result
                 )),
             );
         },
@@ -1085,6 +1137,126 @@ fn set_window_system_menu_enabled_native(
 
 const FLOAT_NOTE_WIDTH: f64 = 724.0;
 const FLOAT_NOTE_MIN_HEIGHT: f64 = 150.0;
+const FLOAT_NOTE_SCREEN_MARGIN: f64 = 24.0;
+const FLOAT_NOTE_BLUR_HIDE_DELAY_MS: u64 = 180;
+const FLOAT_NOTE_ACTIVATION_GRACE_MS: u64 = 700;
+const FLOAT_NOTE_FIRST_FOCUS_RETRY_MS: u64 = 120;
+const FLOAT_NOTE_SECOND_FOCUS_RETRY_GAP_MS: u64 = 200;
+
+fn hide_float_note_window(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    source: &str,
+) -> Result<(), String> {
+    append_debug_log(
+        app,
+        "float_note_hide_start",
+        Some(&format!("source={source}")),
+    );
+    window.hide().map_err(|e| e.to_string())?;
+    append_debug_log(
+        app,
+        "float_note_hide_done",
+        Some(&format!("source={source}")),
+    );
+    Ok(())
+}
+
+fn mark_float_note_activation(app: &AppHandle, source: &str) {
+    let state = app.state::<ShortcutStateStore>();
+    if let Ok(mut last_activation) = state.float_note_last_activation.lock() {
+        *last_activation = Some(Instant::now());
+    }
+    append_debug_log(
+        app,
+        "float_note_activation_marked",
+        Some(&format!("source={source}")),
+    );
+}
+
+fn is_float_note_recently_activated(app: &AppHandle) -> bool {
+    let state = app.state::<ShortcutStateStore>();
+    state
+        .float_note_last_activation
+        .lock()
+        .ok()
+        .and_then(|last_activation| *last_activation)
+        .map(|last| last.elapsed() < Duration::from_millis(FLOAT_NOTE_ACTIVATION_GRACE_MS))
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn is_float_note_window_active(window: &WebviewWindow) -> bool {
+    if !window.is_visible().unwrap_or(false) {
+        return false;
+    }
+    if window.is_focused().unwrap_or(false) {
+        return true;
+    }
+    float_note_focus::is_window_foreground(window).unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn is_float_note_window_active(window: &WebviewWindow) -> bool {
+    window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false)
+}
+
+fn is_cursor_inside_window(app: &AppHandle, window: &WebviewWindow) -> Option<bool> {
+    let cursor = app.cursor_position().ok()?;
+    let position = window.outer_position().ok()?;
+    let size = window.outer_size().ok()?;
+    let left = position.x as f64;
+    let top = position.y as f64;
+    let right = left + size.width as f64;
+    let bottom = top + size.height as f64;
+    Some(cursor.x >= left && cursor.x <= right && cursor.y >= top && cursor.y <= bottom)
+}
+
+fn float_note_window_snapshot(app: &AppHandle, window: &WebviewWindow, source: &str) -> String {
+    let cursor = app
+        .cursor_position()
+        .ok()
+        .map(|point| format!("{},{}", point.x.round(), point.y.round()))
+        .unwrap_or_else(|| "unknown".to_string());
+    let position = window
+        .outer_position()
+        .ok()
+        .map(|point| format!("{},{}", point.x, point.y))
+        .unwrap_or_else(|| "unknown".to_string());
+    let size = window
+        .outer_size()
+        .ok()
+        .map(|size| format!("{}x{}", size.width, size.height))
+        .unwrap_or_else(|| "unknown".to_string());
+    format!(
+        "source={source} visible={} focused={} cursor={} bounds={} size={} cursor_inside={}",
+        window.is_visible().unwrap_or(false),
+        window.is_focused().unwrap_or(false),
+        cursor,
+        position,
+        size,
+        is_cursor_inside_window(app, window)
+            .map(|inside| inside.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    )
+}
+
+fn append_float_note_window_snapshot(app: &AppHandle, window: &WebviewWindow, source: &str) {
+    append_debug_log(
+        app,
+        "float_note_window_snapshot",
+        Some(&float_note_window_snapshot(app, window, source)),
+    );
+}
+
+fn request_float_note_renderer_focus(app: &AppHandle, window: &WebviewWindow, source: &str) {
+    let _ = window.emit("float-note-focus-ready", ());
+    append_debug_log(
+        app,
+        "float_note_emit_focus_ready",
+        Some(&format!("source={source}")),
+    );
+}
 
 fn position_float_note_window(
     app: &AppHandle,
@@ -1112,9 +1284,14 @@ fn position_float_note_window(
         let area_width = area_size.width as f64 / scale;
         let area_height = area_size.height as f64 / scale;
         let next_height = height.max(FLOAT_NOTE_MIN_HEIGHT);
-        let x = area_x + (area_width / 2.0) - (FLOAT_NOTE_WIDTH / 2.0);
+        let min_x = area_x + FLOAT_NOTE_SCREEN_MARGIN;
+        let max_x = area_x + area_width - FLOAT_NOTE_WIDTH - FLOAT_NOTE_SCREEN_MARGIN;
+        let x =
+            (area_x + (area_width / 2.0) - (FLOAT_NOTE_WIDTH / 2.0)).clamp(min_x, max_x.max(min_x));
         let center_y = area_y + (area_height / 3.0);
-        let y = (center_y - (next_height / 2.0)).max(area_y + 24.0);
+        let min_y = area_y + FLOAT_NOTE_SCREEN_MARGIN;
+        let max_y = area_y + area_height - next_height - FLOAT_NOTE_SCREEN_MARGIN;
+        let y = (center_y - (next_height / 2.0)).clamp(min_y, max_y.max(min_y));
         let _ = window.set_position(LogicalPosition::new(x.round(), y.round()));
         append_debug_log(
             app,
@@ -1169,23 +1346,45 @@ fn position_float_note_window(
 fn show_float_note_window(app: &AppHandle) -> Result<bool, String> {
     append_debug_log(app, "float_note_show_start", None);
     let window = ensure_float_note_window(app)?;
+    append_float_note_window_snapshot(app, &window, "show_before");
     let _ = window.set_size(LogicalSize::new(FLOAT_NOTE_WIDTH, FLOAT_NOTE_MIN_HEIGHT));
     position_float_note_window(app, &window, FLOAT_NOTE_MIN_HEIGHT, true, "show");
 
     let _ = window.unminimize();
     window.show().map_err(|e| e.to_string())?;
     append_debug_log(app, "float_note_show_done", None);
+    mark_float_note_activation(app, "show");
     let _ = window.set_always_on_top(true);
     window.set_focus().map_err(|e| e.to_string())?;
     append_debug_log(app, "float_note_set_focus_done", Some("source=show"));
     activate_float_note_window_native(app, &window, "show");
+    append_float_note_window_snapshot(app, &window, "show_after_activate");
     let _ = window.emit("float-note-shown", ());
     append_debug_log(app, "float_note_emit_shown", None);
+    request_float_note_renderer_focus(app, &window, "show");
     focus_float_note_input(app, &window, "show");
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        std::thread::sleep(std::time::Duration::from_millis(120));
+        std::thread::sleep(std::time::Duration::from_millis(FLOAT_NOTE_FIRST_FOCUS_RETRY_MS));
         if let Some(window) = app_handle.get_webview_window("float-note") {
+            append_float_note_window_snapshot(&app_handle, &window, "delayed_120ms_before");
+            if !window.is_visible().unwrap_or(false) {
+                append_debug_log(
+                    &app_handle,
+                    "float_note_delayed_focus_skipped",
+                    Some("source=delayed_120ms reason=hidden"),
+                );
+                return;
+            }
+            if is_float_note_window_active(&window) {
+                append_debug_log(
+                    &app_handle,
+                    "float_note_delayed_focus_skipped",
+                    Some("source=delayed_120ms reason=active"),
+                );
+                return;
+            }
+            mark_float_note_activation(&app_handle, "delayed_120ms");
             let _ = window.set_focus();
             append_debug_log(
                 &app_handle,
@@ -1193,16 +1392,30 @@ fn show_float_note_window(app: &AppHandle) -> Result<bool, String> {
                 Some("source=delayed_120ms"),
             );
             activate_float_note_window_native(&app_handle, &window, "delayed_120ms");
-            let _ = window.emit("float-note-focus-ready", ());
-            append_debug_log(
-                &app_handle,
-                "float_note_emit_focus_ready",
-                Some("source=delayed_120ms"),
-            );
+            request_float_note_renderer_focus(&app_handle, &window, "delayed_120ms");
             focus_float_note_input(&app_handle, &window, "delayed_120ms");
+            append_float_note_window_snapshot(&app_handle, &window, "delayed_120ms_after");
         }
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::thread::sleep(std::time::Duration::from_millis(FLOAT_NOTE_SECOND_FOCUS_RETRY_GAP_MS));
         if let Some(window) = app_handle.get_webview_window("float-note") {
+            append_float_note_window_snapshot(&app_handle, &window, "delayed_320ms_before");
+            if !window.is_visible().unwrap_or(false) {
+                append_debug_log(
+                    &app_handle,
+                    "float_note_delayed_focus_skipped",
+                    Some("source=delayed_320ms reason=hidden"),
+                );
+                return;
+            }
+            if is_float_note_window_active(&window) {
+                append_debug_log(
+                    &app_handle,
+                    "float_note_delayed_focus_skipped",
+                    Some("source=delayed_320ms reason=active"),
+                );
+                return;
+            }
+            mark_float_note_activation(&app_handle, "delayed_320ms");
             let _ = window.set_focus();
             append_debug_log(
                 &app_handle,
@@ -1211,6 +1424,7 @@ fn show_float_note_window(app: &AppHandle) -> Result<bool, String> {
             );
             activate_float_note_window_native(&app_handle, &window, "delayed_320ms");
             focus_float_note_input(&app_handle, &window, "delayed_320ms");
+            append_float_note_window_snapshot(&app_handle, &window, "delayed_320ms_after");
         }
     });
     Ok(true)
@@ -1218,10 +1432,9 @@ fn show_float_note_window(app: &AppHandle) -> Result<bool, String> {
 
 fn toggle_float_note_window(app: &AppHandle) -> Result<bool, String> {
     if let Some(window) = app.get_webview_window("float-note") {
-        if window.is_visible().unwrap_or(false) {
-            append_debug_log(app, "float_note_close_start", Some("source=toggle"));
-            window.close().map_err(|e| e.to_string())?;
-            append_debug_log(app, "float_note_close_done", Some("source=toggle"));
+        append_float_note_window_snapshot(app, &window, "toggle");
+        if is_float_note_window_active(&window) {
+            hide_float_note_window(app, &window, "toggle")?;
             return Ok(true);
         }
     }
@@ -1248,17 +1461,13 @@ fn handle_float_note_shortcut(app: &AppHandle, event: ShortcutState) {
     }
 
     if let Ok(mut is_pressed) = shortcut_state.float_note_is_pressed.lock() {
-        if *is_pressed {
-            append_debug_log(app, "float_note_shortcut_ignored", Some("reason=already_pressed"));
-            return;
-        }
         *is_pressed = true;
     }
 
     if let Ok(mut last_press) = shortcut_state.float_note_last_press.lock() {
         let now = Instant::now();
         if last_press
-            .map(|last| now.duration_since(last) < Duration::from_millis(700))
+            .map(|last| now.duration_since(last) < Duration::from_millis(220))
             .unwrap_or(false)
         {
             append_debug_log(app, "float_note_shortcut_ignored", Some("reason=debounce"));
@@ -1268,17 +1477,15 @@ fn handle_float_note_shortcut(app: &AppHandle, event: ShortcutState) {
     }
 
     if let Some(window) = app.get_webview_window("float-note") {
-        if window.is_visible().unwrap_or(false) {
-            append_debug_log(app, "float_note_close_start", Some("source=shortcut"));
-            let _ = window.close();
-            append_debug_log(app, "float_note_close_done", Some("source=shortcut"));
+        append_float_note_window_snapshot(app, &window, "shortcut_pressed");
+        if is_float_note_window_active(&window) {
+            let _ = hide_float_note_window(app, &window, "shortcut");
             return;
         }
     }
 
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        std::thread::sleep(std::time::Duration::from_millis(180));
         let _ = show_float_note_window(&app_handle);
     });
 }
@@ -2094,9 +2301,7 @@ fn float_note_toggle(app: AppHandle) -> Result<bool, String> {
 #[tauri::command]
 fn float_note_hide(app: AppHandle) -> Result<bool, String> {
     if let Some(window) = app.get_webview_window("float-note") {
-        append_debug_log(&app, "float_note_close_start", Some("source=command"));
-        window.close().map_err(|e| e.to_string())?;
-        append_debug_log(&app, "float_note_close_done", Some("source=command"));
+        hide_float_note_window(&app, &window, "command")?;
     }
     Ok(true)
 }
@@ -2104,7 +2309,16 @@ fn float_note_hide(app: AppHandle) -> Result<bool, String> {
 #[tauri::command]
 fn float_note_focus(app: AppHandle) -> Result<bool, String> {
     if let Some(window) = app.get_webview_window("float-note") {
+        append_float_note_window_snapshot(&app, &window, "command_focus_before");
+        if !window.is_visible().unwrap_or(false) {
+            append_debug_log(&app, "float_note_focus_skipped", Some("reason=hidden"));
+            return Ok(false);
+        }
+        let _ = window.set_always_on_top(true);
+        mark_float_note_activation(&app, "command_focus");
         window.set_focus().map_err(|e| e.to_string())?;
+        activate_float_note_window_native(&app, &window, "command_focus");
+        append_float_note_window_snapshot(&app, &window, "command_focus_after");
         return Ok(true);
     }
     Ok(false)
@@ -2433,6 +2647,29 @@ pub fn run() {
                 });
             } else {
                 append_boot_log_line(app.handle(), "main_window_missing_in_setup");
+            }
+            let default_shortcut = get_default_workspace_path()
+                .ok()
+                .and_then(|path| read_preferences_file(&path_to_string(&path)).ok())
+                .map(|preferences| normalize_shortcut(&preferences.float_note_shortcut))
+                .unwrap_or_else(|| normalize_shortcut(&default_preferences().float_note_shortcut));
+            match register_float_note_shortcut(app.handle(), &default_shortcut) {
+                Ok(()) => {
+                    let state = app.state::<ShortcutStateStore>();
+                    if let Ok(mut active_shortcut) = state.float_note_shortcut.lock() {
+                        *active_shortcut = Some(default_shortcut.clone());
+                    }
+                    append_boot_log_line_with_context(
+                        app.handle(),
+                        "float_note_shortcut_registered",
+                        &default_shortcut,
+                    );
+                }
+                Err(error) => append_boot_log_line_with_context(
+                    app.handle(),
+                    "float_note_shortcut_register_failed",
+                    &error,
+                ),
             }
             Ok(())
         })

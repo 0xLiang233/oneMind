@@ -35,6 +35,7 @@ const QUICK_INPUT_LINE_HEIGHT = 28
 const QUICK_INPUT_MIN_HEIGHT = 32
 const QUICK_INPUT_MAX_LINES = 10
 const QUICK_INPUT_VERTICAL_PADDING = 4
+const INPUT_FOCUS_FALLBACK_DELAY_MS = 140
 const FLOAT_MIN_WINDOW_HEIGHT = 150
 const FLOAT_TOOL_HOME_HEIGHT = 132
 const FLOAT_TOOL_RESULT_HEIGHT = 42
@@ -72,6 +73,7 @@ export function FloatNotePage() {
   const pendingWindowHeightRef = useRef(0)
   const resizeFrameRef = useRef(0)
   const focusTimersRef = useRef<number[]>([])
+  const focusRequestIdRef = useRef(0)
   const debugEnabledRef = useRef(false)
   const requestInputFocusRef = useRef<() => void>(() => undefined)
   const syncPanelHeightRef = useRef<() => void>(() => undefined)
@@ -99,14 +101,22 @@ export function FloatNotePage() {
     })
   }
 
-  function focusInput() {
+  function isInputFocused() {
     const input = inputRef.current
-    writeDebugLog("float_note_focus_input_before", getFocusSnapshot("before"))
+    return Boolean(input && document.hasFocus() && document.activeElement === input)
+  }
+
+  function focusInput(stage = "focus") {
+    const input = inputRef.current
+    if (isInputFocused()) {
+      writeDebugLog("float_note_focus_input_skipped", getFocusSnapshot(`${stage}_already_focused`))
+      return
+    }
+    writeDebugLog("float_note_focus_input_before", getFocusSnapshot(stage))
     if (!input || input.disabled) {
       writeDebugLog("float_note_focus_input_skipped", getFocusSnapshot("skipped"))
       return
     }
-    input.blur()
     input.focus({ preventScroll: true })
     const end = input.value.length
     input.setSelectionRange(end, end)
@@ -122,14 +132,23 @@ export function FloatNotePage() {
 
   function requestInputFocus() {
     clearFocusTimers()
+    const requestId = focusRequestIdRef.current + 1
+    focusRequestIdRef.current = requestId
     writeDebugLog("float_note_request_input_focus", getFocusSnapshot("request_start"))
-    void window.oneMind.floatNote.focus()
+    if (document.visibilityState !== "visible") {
+      writeDebugLog("float_note_request_input_focus_skipped", getFocusSnapshot("hidden"))
+      return
+    }
     window.requestAnimationFrame(() => {
-      void window.oneMind.floatNote.focus().finally(focusInput)
+      if (focusRequestIdRef.current === requestId) {
+        focusInput("raf")
+      }
     })
-    ;[0, 50, 140, 260, 500, 900].forEach((delay) => {
+    ;[INPUT_FOCUS_FALLBACK_DELAY_MS].forEach((delay) => {
       const timer = window.setTimeout(() => {
-        void window.oneMind.floatNote.focus().finally(focusInput)
+        if (focusRequestIdRef.current === requestId) {
+          focusInput(`delay_${delay}`)
+        }
       }, delay)
       focusTimersRef.current.push(timer)
     })
@@ -443,6 +462,9 @@ export function FloatNotePage() {
 
   const placeholder = mode === "quick" ? "记录想法..." : "搜索工具..."
   const shortcutHint = mode === "quick" ? "Enter 保存 · Shift+Enter 换行 · Shift+Tab 切换模式" : "Enter 打开 · 方向键选择 · Shift+Tab 切换模式"
+  const handleInputFocusEvent = () => writeDebugLog("float_note_input_focus_event", getFocusSnapshot("input_focus"))
+  const handleInputBlurEvent = () => writeDebugLog("float_note_input_blur_event", getFocusSnapshot("input_blur"))
+  const handleInputMouseDownEvent = () => writeDebugLog("float_note_input_mousedown_event", getFocusSnapshot("input_mousedown"))
 
   return (
     <main className="float-note-page" onMouseDown={(event) => {
@@ -468,6 +490,9 @@ export function FloatNotePage() {
             value={value}
             onChange={handleValueChange}
             onKeyDown={handleKeyDown}
+            onFocus={handleInputFocusEvent}
+            onBlur={handleInputBlurEvent}
+            onMouseDown={handleInputMouseDownEvent}
             placeholder={placeholder}
             spellCheck={false}
             rows={1}
