@@ -10,7 +10,7 @@
   background: linear-gradient(90deg, var(--color-titlebar-bg-start) 0%, var(--color-titlebar-bg-end) 100%);
   border-bottom: 1px solid var(--color-border-subtle);
   display: grid;
-  grid-template-columns: var(--sidebar-expanded-width) minmax(0, auto) minmax(56px, 1fr) auto;
+  grid-template-columns: var(--sidebar-expanded-width) minmax(0, 1fr) minmax(24px, 0.35fr) 132px;
   align-items: center;
   -webkit-app-region: drag;
   user-select: none;
@@ -18,7 +18,7 @@
   transition: grid-template-columns var(--transition-sidebar-collapse);
 }
 .app-shell.sidebar-collapsed .app-chrome {
-  grid-template-columns: var(--sidebar-collapsed-width) minmax(0, auto) minmax(56px, 1fr) auto;
+  grid-template-columns: var(--sidebar-collapsed-width) minmax(0, 1fr) minmax(24px, 0.35fr) 132px;
 }
 .chrome-brand {
   height: 100%;
@@ -104,6 +104,7 @@
 .chrome-tabs {
   height: 100%;
   min-width: 0;
+  max-width: 100%;
   display: flex;
   align-items: end;
   gap: 4px;
@@ -112,6 +113,8 @@
   padding: 0 6px;
   scrollbar-width: none;
   -webkit-app-region: no-drag;
+  position: relative;
+  z-index: 1;
 }
 .chrome-tabs::-webkit-scrollbar {
   display: none;
@@ -120,8 +123,17 @@
   height: 100%;
   min-width: 0;
   -webkit-app-region: drag;
+  position: relative;
+  z-index: 0;
 }
-.titlebar-controls { display: flex; height: var(--app-chrome-height); -webkit-app-region: no-drag; }
+.titlebar-controls {
+  display: flex;
+  width: 132px;
+  height: var(--app-chrome-height);
+  -webkit-app-region: no-drag;
+  position: relative;
+  z-index: 3;
+}
 .titlebar-btn {
   width: 44px; height: var(--app-chrome-height);
   border: 0; background: transparent;

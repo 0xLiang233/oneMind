@@ -69,6 +69,10 @@ function getActivityCopy(event: ActivityEvent) {
   return `${moduleLabel}${action}`
 }
 
+function getEventTime(event: ActivityEvent) {
+  return event.startedAt ?? event.occurredAt
+}
+
 function getIntensity(score: number) {
   if (score <= 0) return 0
   if (score <= 3) return 1
@@ -163,7 +167,7 @@ export function ActivitySettingsPanel({ workspacePath }: ActivitySettingsPanelPr
     return events
       .filter((event) => event.occurredAt.startsWith(selectedDate))
       .filter((event) => moduleFilter === "all" || event.module === moduleFilter)
-      .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt))
+      .sort((left, right) => getEventTime(right).localeCompare(getEventTime(left)))
   }, [moduleFilter, report, selectedDate])
 
   const selectedSummary = dayMap.get(selectedDate)
@@ -293,7 +297,7 @@ export function ActivitySettingsPanel({ workspacePath }: ActivitySettingsPanelPr
         <div className="activity-timeline">
           {selectedEvents.map((event) => (
             <article className="activity-timeline-item" key={event.id}>
-              <time>{getTimeLabel(event.startedAt ?? event.occurredAt)}</time>
+              <time>{getTimeLabel(getEventTime(event))}</time>
               <span className={"activity-module " + (moduleMeta[event.module]?.tone ?? "slate")}>
                 {getModuleLabel(event.module)}
               </span>
