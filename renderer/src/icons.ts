@@ -21,6 +21,7 @@ export {
   Maximize2,
   Minus,
   MoveRight,
+  NotebookText,
   PanelLeftClose,
   PanelLeftOpen,
   PenLine,

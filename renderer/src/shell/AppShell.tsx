@@ -7,13 +7,13 @@ import {
   ChevronRight,
   FilePlus,
   FileText,
-  Folder,
   FolderOpen,
   FolderPlus,
   Grid3X3,
   Home,
   Image,
   MoveRight,
+  NotebookText,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -88,7 +88,7 @@ const sidebarIcons: Array<{
     scene: "notes",
     accent: "primary",
     tooltip: "笔记",
-    icon: FileText
+    icon: NotebookText
   },
   {
     scene: "sources",
@@ -132,7 +132,16 @@ function FolderArrow() {
 function FolderIcon() {
   return (
     <span className="tree-folder-icon">
-      <Folder size={14} strokeWidth={1.7} aria-hidden="true" />
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path
+          className="tree-folder-icon-tab"
+          d="M1.8 4.4C1.8 3.6 2.45 3 3.22 3h3.1c.44 0 .86.2 1.13.55l.63.82h4.62c.82 0 1.48.66 1.48 1.48v.65H1.8V4.4Z"
+        />
+        <path
+          className="tree-folder-icon-body"
+          d="M1.55 6.15c.07-.7.67-1.23 1.37-1.23h10.16c.79 0 1.41.67 1.35 1.46l-.42 5.14c-.06.72-.66 1.28-1.38 1.28H3.13c-.72 0-1.32-.56-1.38-1.28l-.2-5.37Z"
+        />
+      </svg>
     </span>
   )
 }
