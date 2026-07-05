@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useNavigate, useOutletContext } from "react-router-dom"
 import { trackActivity } from "../activity"
+import { FilePlus, PenLine, Trash2 } from "../icons"
 
 type OutletContext = {
   workspace: WorkspaceMeta | null
@@ -184,11 +185,6 @@ export function CapturePage() {
     )
   }
 
-  function enterSelectMode() {
-    setSelectMode(true)
-    setSelectedIds([])
-  }
-
   async function handleSave() {
     if (!workspace || !content.trim() || saving) return
     setSaving(true)
@@ -258,36 +254,25 @@ export function CapturePage() {
   return (
     <section className="page quicknote-page">
       <header className="quicknote-topbar">
-        <div className="quicknote-title">随记</div>
-        <div className="quicknote-actions">
-          <div className="notes-status">{status}</div>
-          {!selectMode ? (
-            <button type="button" className="secondary compact" onClick={enterSelectMode}>
-              选择
-            </button>
-          ) : (
-            <>
-              <button type="button" className="secondary compact" onClick={() => setSelectedIds(items.map(item => item.id))}>
-                全选
-              </button>
-              <button type="button" className="compact" onClick={exitSelectMode}>
-                取消
-              </button>
-            </>
-          )}
+        <div>
+          <div className="quicknote-title">随记</div>
+          <div className="quicknote-count">{items.length > 0 ? `${items.length} 条记录` : "空白收件箱"}</div>
         </div>
       </header>
 
       <section className="quicknote-composer-inline">
+        <div className="quicknote-composer-icon" aria-hidden="true">
+          <PenLine size={18} strokeWidth={1.8} />
+        </div>
         <textarea
           className="quicknote-inline-input"
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          placeholder="记录想法、网页摘录、待整理内容..."
+          placeholder="写下刚想到的内容..."
         />
-        <button type="button" className="compact" onClick={handleSave}
+        <button type="button" className="quicknote-save-button" onClick={handleSave}
           disabled={!workspace || !content.trim() || saving}>
-          {saving ? "保存中..." : "保存随记"}
+          {saving ? "保存中" : "保存"}
         </button>
       </section>
 
@@ -321,8 +306,10 @@ export function CapturePage() {
                       className="quick-card-action quick-card-action--muted"
                       onClick={(event) => { event.stopPropagation(); void handleDeleteItem(item) }}
                       disabled={!workspace}
+                      title="删除"
+                      aria-label="删除"
                     >
-                      删除
+                      <Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />
                     </button>
                     <button
                       type="button"
@@ -330,7 +317,8 @@ export function CapturePage() {
                       onClick={(event) => { event.stopPropagation(); void handleConvertToNote(item) }}
                       disabled={!workspace || convertingId === item.id}
                     >
-                      {convertingId === item.id ? "创建中..." : "转为正文"}
+                      <FilePlus size={14} strokeWidth={1.8} aria-hidden="true" />
+                      {convertingId === item.id ? "创建中" : "转正文"}
                     </button>
                   </div>
                 )}
