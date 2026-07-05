@@ -1093,6 +1093,10 @@ body.float-note-shell #root {
 .onemind-markdown-editor .ProseMirror th > * {
   margin: 0;
 }
+.onemind-markdown-editor .ProseMirror .selectedCell::after {
+  background: color-mix(in srgb, var(--color-accent-primary) 14%, transparent);
+  pointer-events: none;
+}
 .onemind-markdown-editor .ProseMirror ::selection {
   background: var(--color-accent-primary-glow);
 }
@@ -2828,7 +2832,7 @@ button:disabled { opacity: 0.5; cursor: default; }
   position: fixed;
   min-width: 196px;
   max-width: 280px;
-  max-height: 400px;
+  max-height: var(--context-menu-max-height, 400px);
   background: var(--color-contextmenu-bg, var(--glass-bg));
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
@@ -2840,7 +2844,7 @@ button:disabled { opacity: 0.5; cursor: default; }
   z-index: 10000; user-select: none;
 }
 .context-menu-scroll {
-  max-height: calc(400px - 8px); overflow-y: auto;
+  max-height: calc(var(--context-menu-max-height, 400px) - 8px); overflow-y: auto;
 }
 .context-menu:has(.context-menu-submenu) {
   overflow: visible;

@@ -79,7 +79,7 @@ importers:
         version: 1.2.3
       '@milkdown/crepe':
         specifier: ^7.21.2
-        version: 7.21.2(typescript@6.0.3)
+        version: 7.21.2(prosemirror-state@1.4.4)(typescript@6.0.3)
       '@milkdown/kit':
         specifier: 7.21.2
         version: 7.21.2(@codemirror/language@6.12.3)(@codemirror/state@6.7.0)(@codemirror/view@6.43.2)(typescript@6.0.3)
@@ -89,6 +89,12 @@ importers:
       mermaid:
         specifier: ^11.16.0
         version: 11.16.0
+      prosemirror-state:
+        specifier: 1.4.4
+        version: 1.4.4
+      prosemirror-tables:
+        specifier: 1.8.5
+        version: 1.8.5
       react:
         specifier: ^19.2.6
         version: 19.2.7
@@ -1186,7 +1192,7 @@ packages:
       - supports-color
     dev: false
 
-  /@milkdown/crepe@7.21.2(typescript@6.0.3):
+  /@milkdown/crepe@7.21.2(prosemirror-state@1.4.4)(typescript@6.0.3):
     resolution: {integrity: sha512-3BaEADeWxVYTn6TwromOKnu/m5GLJvIKGl4VlHJ9dVpdh7VLEwLbggfw5nweQmpnGWEaqyDplk2uPH0xK5MMhg==}
     dependencies:
       '@codemirror/commands': 6.10.4
@@ -1202,7 +1208,7 @@ packages:
       dompurify: 3.4.11
       katex: 0.17.0
       lodash-es: 4.18.1
-      prosemirror-virtual-cursor: 0.4.2
+      prosemirror-virtual-cursor: 0.4.2(prosemirror-state@1.4.4)
       remark-math: 6.0.0
       unist-util-visit: 5.1.0
       vue: 3.5.38(typescript@6.0.3)
@@ -5219,7 +5225,7 @@ packages:
       prosemirror-transform: 1.12.0
     dev: false
 
-  /prosemirror-virtual-cursor@0.4.2:
+  /prosemirror-virtual-cursor@0.4.2(prosemirror-state@1.4.4):
     resolution: {integrity: sha512-pUMKnIuOhhnMcgIJUjhIQTVJruBEGxfMBVQSrK0g2qhGPDm1i12KdsVaFw15dYk+29tZcxjMeR7P5VDKwmbwJg==}
     peerDependencies:
       prosemirror-model: ^1.0.0
@@ -5232,6 +5238,8 @@ packages:
         optional: true
       prosemirror-view:
         optional: true
+    dependencies:
+      prosemirror-state: 1.4.4
     dev: false
 
   /proxy-from-env@2.1.0:

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 
 export interface ContextMenuItem {
   label: string
@@ -22,6 +22,39 @@ interface ContextMenuProps {
 
 export function ContextMenu({ id, items, x, y, onClose, onAction }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState<{ x: number; y: number; maxHeight: number } | null>(null)
+
+  useLayoutEffect(() => {
+    function updatePosition() {
+      const element = ref.current
+      if (!element) return
+
+      const margin = 8
+      const viewportWidth = window.innerWidth
+      const viewportHeight = window.innerHeight
+      const availableHeight = Math.max(160, viewportHeight - margin * 2)
+      const rect = element.getBoundingClientRect()
+      const menuWidth = rect.width
+      const menuHeight = Math.min(rect.height, availableHeight)
+
+      const nextX = Math.min(
+        Math.max(margin, x),
+        Math.max(margin, viewportWidth - menuWidth - margin)
+      )
+      const shouldOpenUpward = y + menuHeight + margin > viewportHeight && y - menuHeight > margin
+      const preferredY = shouldOpenUpward ? y - menuHeight : y
+      const nextY = Math.min(
+        Math.max(margin, preferredY),
+        Math.max(margin, viewportHeight - menuHeight - margin)
+      )
+
+      setPosition({ x: nextX, y: nextY, maxHeight: availableHeight })
+    }
+
+    updatePosition()
+    window.addEventListener("resize", updatePosition)
+    return () => window.removeEventListener("resize", updatePosition)
+  }, [items, x, y])
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -42,11 +75,11 @@ export function ContextMenu({ id, items, x, y, onClose, onAction }: ContextMenuP
     }
   }, [onClose])
 
-  const style: React.CSSProperties = {}
-  if (typeof x === "number" && typeof y === "number") {
-    style.left = x + "px"
-    style.top = y + "px"
-  }
+  const style = {
+    left: `${position?.x ?? x}px`,
+    top: `${position?.y ?? y}px`,
+    "--context-menu-max-height": `${position?.maxHeight ?? 400}px`
+  } as React.CSSProperties
 
   return (
     <div ref={ref} className="context-menu" id={id} role="menu" style={style}>

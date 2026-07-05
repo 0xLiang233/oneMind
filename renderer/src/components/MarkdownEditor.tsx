@@ -22,6 +22,16 @@ import {
 } from "@milkdown/kit/preset/commonmark"
 import { createTable } from "@milkdown/kit/preset/gfm"
 import { commandsCtx, editorViewCtx } from "@milkdown/kit/core"
+import { TextSelection } from "prosemirror-state"
+import {
+  addColumnAfter,
+  addColumnBefore,
+  addRowAfter,
+  addRowBefore,
+  deleteColumn,
+  deleteRow,
+  deleteTable
+} from "prosemirror-tables"
 import { useEffect, useMemo, useRef, useState } from "react"
 import mermaid from "mermaid"
 import { ContextMenu, type ContextMenuItem } from "../shell/ContextMenu"
@@ -50,12 +60,26 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
   const editorRef = useRef<CrepeBuilder | null>(null)
   const onChangeRef = useRef(onChange)
   const selectionRangeRef = useRef<Range | null>(null)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; inTable: boolean } | null>(null)
   const [slashMenu, setSlashMenu] = useState<{ x: number; y: number; activeIndex: number } | null>(null)
 
   function updateProperties(nextProperties: MarkdownProperty[]) {
     onChangeRef.current(mergeMarkdownDocument(serializeFrontmatterProperties(nextProperties), parsedDocument.body))
   }
+
+  const tableMenuItems = useMemo<ContextMenuItem[][]>(() => [
+    [
+      { label: "在上方插入行", action: "table-add-row-before", disabled: readonly },
+      { label: "在下方插入行", action: "table-add-row-after", disabled: readonly },
+      { label: "在左侧插入列", action: "table-add-column-before", disabled: readonly },
+      { label: "在右侧插入列", action: "table-add-column-after", disabled: readonly }
+    ],
+    [
+      { label: "删除当前行", action: "table-delete-row", disabled: readonly },
+      { label: "删除当前列", action: "table-delete-column", disabled: readonly },
+      { label: "删除表格", action: "table-delete-table", danger: true, disabled: readonly }
+    ]
+  ], [readonly])
 
   const menuItems = useMemo<ContextMenuItem[][]>(() => [
     [
@@ -297,8 +321,33 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
   function handleContextMenu(e: React.MouseEvent) {
     if (!rootRef.current?.contains(e.target as Node)) return
     e.preventDefault()
-    saveCurrentSelection()
-    setContextMenu({ x: e.clientX, y: e.clientY })
+    const inTable = Boolean((e.target as Element).closest("td, th"))
+    if (inTable) {
+      focusEditorAtCoords(e.clientX, e.clientY)
+    } else {
+      saveCurrentSelection()
+    }
+    setContextMenu({ x: e.clientX, y: e.clientY, inTable })
+  }
+
+  function focusEditorAtCoords(x: number, y: number) {
+    const editor = editorRef.current?.editor
+    if (!editor) return false
+
+    let handled = false
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      const position = view.posAtCoords({ left: x, top: y })
+      if (!position) return
+
+      const resolvedPosition = view.state.doc.resolve(position.pos)
+      const selection = TextSelection.near(resolvedPosition)
+      view.focus()
+      view.dispatch(view.state.tr.setSelection(selection))
+      handled = true
+    })
+    if (handled) saveCurrentSelection()
+    return handled
   }
 
   function getSelectionMenuPosition() {
@@ -379,6 +428,8 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
   async function handleMenuAction(action: string) {
     restoreEditorSelection()
 
+    if (action.startsWith("table-") && runTableCommand(action)) return
+
     if (action === "copy" || action === "cut") {
       document.execCommand(action)
       return
@@ -398,6 +449,47 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
     if (markdownSnippet && pasteMarkdown(markdownSnippet)) return
 
     if (runMilkdownCommand(action)) return
+  }
+
+  function runTableCommand(action: string) {
+    if (readonly) return false
+    const editor = editorRef.current?.editor
+    if (!editor) return false
+
+    let handled = false
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx)
+      const dispatch = view.dispatch.bind(view)
+
+      switch (action) {
+        case "table-add-row-before":
+          handled = addRowBefore(view.state, dispatch)
+          break
+        case "table-add-row-after":
+          handled = addRowAfter(view.state, dispatch)
+          break
+        case "table-add-column-before":
+          handled = addColumnBefore(view.state, dispatch)
+          break
+        case "table-add-column-after":
+          handled = addColumnAfter(view.state, dispatch)
+          break
+        case "table-delete-row":
+          handled = deleteRow(view.state, dispatch)
+          break
+        case "table-delete-column":
+          handled = deleteColumn(view.state, dispatch)
+          break
+        case "table-delete-table":
+          handled = deleteTable(view.state, dispatch)
+          break
+      }
+
+      if (handled) view.focus()
+    })
+
+    if (handled) saveCurrentSelection()
+    return handled
   }
 
   function insertMarkdownText(text: string) {
@@ -514,7 +606,7 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
       {contextMenu && (
         <ContextMenu
           id="editor-context-menu"
-          items={menuItems}
+          items={contextMenu.inTable ? [...tableMenuItems, ...menuItems] : menuItems}
           x={contextMenu.x}
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
