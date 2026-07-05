@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use windows::core::Interface;
 mod float_note_focus;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
 use std::{
     env,
     fs::{self, OpenOptions},
@@ -12,12 +14,10 @@ use std::{
     sync::Mutex,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-#[cfg(windows)]
-use std::os::windows::ffi::OsStrExt;
 use tauri::webview::{NewWindowResponse, WebviewBuilder};
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Url, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -31,11 +31,12 @@ use windows::Win32::Graphics::Gdi::{
 #[cfg(windows)]
 use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
 #[cfg(windows)]
-use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ};
+use windows::Win32::System::Com::{
+    CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ,
+};
 #[cfg(windows)]
 use windows::Win32::UI::Shell::{
-    IShellLinkW, SHGetFileInfoW, SHGFI_ICON, SHGFI_LARGEICON, SHGFI_SMALLICON, SHFILEINFOW,
-    ShellLink,
+    IShellLinkW, SHGetFileInfoW, ShellLink, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON,
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -160,6 +161,11 @@ struct ShortcutStateStore {
     float_note_last_activation: Mutex<Option<Instant>>,
 }
 
+#[derive(Default)]
+struct SystemAppStore {
+    cached_apps: Mutex<Option<Vec<SystemAppEntry>>>,
+}
+
 struct ResolvedSystemApp {
     id: String,
     name: String,
@@ -268,7 +274,10 @@ fn safe_storage_key(value: &str) -> String {
 }
 
 fn system_app_id(path: &Path) -> String {
-    format!("system-app-{}", safe_storage_key(&path_to_string(path).to_lowercase()))
+    format!(
+        "system-app-{}",
+        safe_storage_key(&path_to_string(path).to_lowercase())
+    )
 }
 
 fn system_app_name(path: &Path) -> String {
@@ -292,7 +301,10 @@ fn is_supported_system_app_path(path: &Path) -> bool {
 }
 
 fn utf16_buffer_to_string(buffer: &[u16]) -> Option<String> {
-    let end = buffer.iter().position(|value| *value == 0).unwrap_or(buffer.len());
+    let end = buffer
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(buffer.len());
     let value = String::from_utf16_lossy(&buffer[..end]).trim().to_string();
     if value.is_empty() {
         None
@@ -350,7 +362,11 @@ fn resolve_system_app_entry(path: &Path) -> Option<ResolvedSystemApp> {
         if let Some(link) = resolve_windows_shell_link(path) {
             if let Some(icon_path) = link.icon_path.filter(|value| Path::new(value).exists()) {
                 icon_source_path = PathBuf::from(icon_path);
-            } else if let Some(target) = link.target_path.as_ref().filter(|value| Path::new(value).exists()) {
+            } else if let Some(target) = link
+                .target_path
+                .as_ref()
+                .filter(|value| Path::new(value).exists())
+            {
                 icon_source_path = PathBuf::from(target);
             }
             target_path = link.target_path;
@@ -379,7 +395,8 @@ struct WindowsShellLinkInfo {
 #[cfg(windows)]
 fn resolve_windows_shell_link(path: &Path) -> Option<WindowsShellLinkInfo> {
     unsafe {
-        let shell_link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        let shell_link: IShellLinkW =
+            CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
         let persist_file: IPersistFile = shell_link.cast().ok()?;
         let wide_path = path
             .as_os_str()
@@ -391,7 +408,9 @@ fn resolve_windows_shell_link(path: &Path) -> Option<WindowsShellLinkInfo> {
             .ok()?;
 
         let mut target_buffer = vec![0u16; MAX_PATH as usize];
-        let target_path = shell_link.GetPath(&mut target_buffer, std::ptr::null_mut(), 0).ok()
+        let target_path = shell_link
+            .GetPath(&mut target_buffer, std::ptr::null_mut(), 0)
+            .ok()
             .and_then(|_| utf16_buffer_to_string(&target_buffer));
 
         let mut icon_buffer = vec![0u16; MAX_PATH as usize];
@@ -444,25 +463,72 @@ fn collect_system_apps_from_dir(app: &AppHandle, root: &Path, entries: &mut Vec<
     }
 }
 
-fn system_app_search_score(name: &str, query: &str) -> Option<usize> {
+fn system_app_initials(name: &str) -> String {
+    name.split(|ch: char| !ch.is_alphanumeric())
+        .filter_map(|part| part.chars().next())
+        .collect::<String>()
+        .to_lowercase()
+}
+
+fn fuzzy_subsequence_score(text: &str, query: &str) -> Option<usize> {
     if query.is_empty() {
-        return Some(100);
+        return Some(0);
     }
 
-    let name = name.to_lowercase();
+    let mut query_chars = query.chars();
+    let mut current = query_chars.next()?;
+    let mut gaps = 0usize;
+    let mut started = false;
+
+    for ch in text.chars() {
+        if ch == current {
+            started = true;
+            if let Some(next) = query_chars.next() {
+                current = next;
+            } else {
+                return Some(gaps);
+            }
+        } else if started {
+            gaps += 1;
+        }
+    }
+
+    None
+}
+
+fn system_app_search_score(entry: &SystemAppEntry, query: &str) -> Option<usize> {
+    if query.is_empty() {
+        return Some(1000);
+    }
+
+    let name = entry.name.to_lowercase();
+    let path = entry.path.to_lowercase();
+    let target_path = entry.target_path.as_deref().unwrap_or("").to_lowercase();
+    let initials = system_app_initials(&entry.name);
+
     if name == query {
         Some(0)
     } else if name.starts_with(query) {
         Some(10 + name.len().saturating_sub(query.len()))
+    } else if initials.starts_with(query) {
+        Some(28 + initials.len().saturating_sub(query.len()))
+    } else if name
+        .split(|ch: char| !ch.is_alphanumeric())
+        .any(|part| part.starts_with(query))
+    {
+        Some(38)
     } else if name.contains(query) {
         Some(30 + name.find(query).unwrap_or(0))
+    } else if path.contains(query) || target_path.contains(query) {
+        Some(110)
+    } else if let Some(gaps) = fuzzy_subsequence_score(&name, query) {
+        Some(160 + gaps)
     } else {
         None
     }
 }
 
-fn list_system_apps(app: &AppHandle, query: &str) -> Vec<SystemAppEntry> {
-    let normalized_query = query.trim().to_lowercase();
+fn scan_system_apps(app: &AppHandle) -> Vec<SystemAppEntry> {
     let mut entries = Vec::new();
 
     #[cfg(windows)]
@@ -500,16 +566,93 @@ fn list_system_apps(app: &AppHandle, query: &str) -> Vec<SystemAppEntry> {
     }
 
     entries.sort_by(|left, right| {
-        let left_score = system_app_search_score(&left.name, &normalized_query).unwrap_or(usize::MAX);
-        let right_score = system_app_search_score(&right.name, &normalized_query).unwrap_or(usize::MAX);
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.path.to_lowercase().cmp(&right.path.to_lowercase()))
+    });
+    entries.dedup_by(|left, right| {
+        left.path.eq_ignore_ascii_case(&right.path)
+            || (left.name.eq_ignore_ascii_case(&right.name)
+                && left
+                    .target_path
+                    .as_deref()
+                    .unwrap_or("")
+                    .eq_ignore_ascii_case(right.target_path.as_deref().unwrap_or("")))
+    });
+    entries
+}
+
+fn get_cached_system_apps(app: &AppHandle) -> Vec<SystemAppEntry> {
+    let store = app.state::<SystemAppStore>();
+    if let Ok(mut cached_apps) = store.cached_apps.lock() {
+        if let Some(apps) = cached_apps.as_ref() {
+            return apps.clone();
+        }
+        let apps = scan_system_apps(app);
+        *cached_apps = Some(apps.clone());
+        return apps;
+    }
+
+    scan_system_apps(app)
+}
+
+fn recent_rank_map(recents: &[SystemAppEntry]) -> std::collections::HashMap<String, usize> {
+    recents
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| (entry.path.to_lowercase(), index))
+        .collect()
+}
+
+fn list_system_apps(app: &AppHandle, workspace_path: &str, query: &str) -> Vec<SystemAppEntry> {
+    let normalized_query = query.trim().to_lowercase();
+    let recents = read_system_app_recents(workspace_path);
+    let recent_ranks = recent_rank_map(&recents);
+    let apps = get_cached_system_apps(app);
+    let mut entries = if normalized_query.is_empty() {
+        let mut home_entries = recents
+            .iter()
+            .cloned()
+            .filter(|entry| Path::new(&entry.path).exists() || entry.path.starts_with("uwp:"))
+            .collect::<Vec<_>>();
+        if home_entries.is_empty() {
+            home_entries = apps.into_iter().take(12).collect();
+        }
+        home_entries
+    } else {
+        apps.into_iter()
+            .filter(|entry| system_app_search_score(entry, &normalized_query).is_some())
+            .collect::<Vec<_>>()
+    };
+
+    entries.sort_by(|left, right| {
+        let left_recent_rank = recent_ranks.get(&left.path.to_lowercase()).copied();
+        let right_recent_rank = recent_ranks.get(&right.path.to_lowercase()).copied();
+        let left_score = system_app_search_score(left, &normalized_query).unwrap_or(usize::MAX)
+            + left_recent_rank.map(|rank| rank * 2).unwrap_or(40);
+        let right_score = system_app_search_score(right, &normalized_query).unwrap_or(usize::MAX)
+            + right_recent_rank.map(|rank| rank * 2).unwrap_or(40);
         left_score
             .cmp(&right_score)
+            .then_with(|| {
+                left_recent_rank
+                    .unwrap_or(usize::MAX)
+                    .cmp(&right_recent_rank.unwrap_or(usize::MAX))
+            })
             .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
     });
-    entries.dedup_by(|left, right| left.name.eq_ignore_ascii_case(&right.name));
     entries
         .into_iter()
-        .filter(|entry| system_app_search_score(&entry.name, &normalized_query).is_some())
+        .map(|mut entry| {
+            if let Some(rank) = recent_ranks.get(&entry.path.to_lowercase()) {
+                entry.source = "recent".to_string();
+                entry.last_used_at = recents
+                    .get(*rank)
+                    .and_then(|recent| recent.last_used_at.clone());
+            }
+            entry
+        })
         .take(24)
         .collect()
 }
@@ -559,7 +702,10 @@ fn resolve_system_app_icon(_app: &AppHandle, _path: &Path) -> (Option<String>, O
 }
 
 #[cfg(windows)]
-fn resolve_windows_system_app_icon(app: &AppHandle, path: &Path) -> (Option<String>, Option<String>) {
+fn resolve_windows_system_app_icon(
+    app: &AppHandle,
+    path: &Path,
+) -> (Option<String>, Option<String>) {
     let Ok(app_data_dir) = app.path().app_data_dir() else {
         return (None, None);
     };
@@ -567,8 +713,8 @@ fn resolve_windows_system_app_icon(app: &AppHandle, path: &Path) -> (Option<Stri
     if fs::create_dir_all(&icon_dir).is_err() {
         return (None, None);
     }
-    let icon_path = icon_dir.join(format!("v2-{}.png", system_app_id(path)));
-    if !icon_path.exists() && save_windows_shell_icon_png(path, &icon_path, 32).is_err() {
+    let icon_path = icon_dir.join(format!("v3-{}.png", system_app_id(path)));
+    if !icon_path.exists() && save_windows_shell_icon_png(path, &icon_path, 64).is_err() {
         return (None, None);
     }
 
@@ -582,7 +728,11 @@ fn resolve_windows_system_app_icon(app: &AppHandle, path: &Path) -> (Option<Stri
 }
 
 #[cfg(windows)]
-fn save_windows_shell_icon_png(source_path: &Path, output_path: &Path, size: i32) -> Result<(), String> {
+fn save_windows_shell_icon_png(
+    source_path: &Path,
+    output_path: &Path,
+    size: i32,
+) -> Result<(), String> {
     let mut wide_path = source_path
         .as_os_str()
         .encode_wide()
@@ -603,7 +753,7 @@ fn save_windows_shell_icon_png(source_path: &Path, output_path: &Path, size: i32
             FILE_FLAGS_AND_ATTRIBUTES(0),
             Some(&mut file_info),
             info_size,
-            SHGFI_ICON | SHGFI_LARGEICON | SHGFI_SMALLICON,
+            SHGFI_ICON | SHGFI_LARGEICON,
         )
     };
     if result == 0 || file_info.hIcon.is_invalid() {
@@ -624,7 +774,10 @@ fn save_windows_shell_icon_png(source_path: &Path, output_path: &Path, size: i32
 }
 
 #[cfg(windows)]
-unsafe fn hicon_to_rgba(icon: windows::Win32::UI::WindowsAndMessaging::HICON, size: i32) -> Result<Vec<u8>, String> {
+unsafe fn hicon_to_rgba(
+    icon: windows::Win32::UI::WindowsAndMessaging::HICON,
+    size: i32,
+) -> Result<Vec<u8>, String> {
     let screen_dc = GetDC(None);
     if screen_dc.is_invalid() {
         return Err("failed to get screen dc".to_string());
@@ -827,6 +980,52 @@ fn read_quick_notes_file(workspace_path: &str) -> Result<Vec<QuickNote>, String>
     Ok(notes)
 }
 
+fn get_system_app_recents_file(workspace_path: &str) -> Result<PathBuf, String> {
+    let app_data_path = Path::new(workspace_path).join(".onemind");
+    fs::create_dir_all(&app_data_path).map_err(|e| e.to_string())?;
+    Ok(app_data_path.join("system-app-recents.json"))
+}
+
+fn read_system_app_recents(workspace_path: &str) -> Vec<SystemAppEntry> {
+    let Ok(file_path) = get_system_app_recents_file(workspace_path) else {
+        return Vec::new();
+    };
+    let raw = fs::read_to_string(file_path).unwrap_or_else(|_| "[]".to_string());
+    let mut recents = serde_json::from_str::<Vec<SystemAppEntry>>(&raw).unwrap_or_default();
+    recents.sort_by(|left, right| right.last_used_at.cmp(&left.last_used_at));
+    recents.truncate(12);
+    recents
+}
+
+fn write_system_app_recents(
+    workspace_path: &str,
+    recents: &[SystemAppEntry],
+) -> Result<(), String> {
+    let file_path = get_system_app_recents_file(workspace_path)?;
+    fs::write(
+        file_path,
+        serde_json::to_string_pretty(recents).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn record_system_app_recent(
+    workspace_path: &str,
+    app_entry: &SystemAppEntry,
+) -> Result<(), String> {
+    let mut recents = read_system_app_recents(workspace_path);
+    let mut next_entry = app_entry.clone();
+    next_entry.source = "recent".to_string();
+    next_entry.last_used_at = Some(now_iso_like());
+    recents.retain(|entry| {
+        !entry.path.eq_ignore_ascii_case(&next_entry.path)
+            && !entry.name.eq_ignore_ascii_case(&next_entry.name)
+    });
+    recents.insert(0, next_entry);
+    recents.truncate(12);
+    write_system_app_recents(workspace_path, &recents)
+}
+
 fn get_preferences_file(workspace_path: &str) -> Result<PathBuf, String> {
     let app_data_path = Path::new(workspace_path).join(".onemind");
     fs::create_dir_all(&app_data_path).map_err(|e| e.to_string())?;
@@ -972,7 +1171,9 @@ fn ensure_float_note_window(app: &AppHandle) -> Result<WebviewWindow, String> {
                 Some("focused=false"),
             );
             tauri::async_runtime::spawn(async move {
-                std::thread::sleep(std::time::Duration::from_millis(FLOAT_NOTE_BLUR_HIDE_DELAY_MS));
+                std::thread::sleep(std::time::Duration::from_millis(
+                    FLOAT_NOTE_BLUR_HIDE_DELAY_MS,
+                ));
                 append_float_note_window_snapshot(&app_handle, &blur_window, "blur_delayed");
                 if !blur_window.is_visible().unwrap_or(false) {
                     append_debug_log(
@@ -1006,8 +1207,16 @@ fn ensure_float_note_window(app: &AppHandle) -> Result<WebviewWindow, String> {
                     );
                     mark_float_note_activation(&app_handle, "blur_cursor_inside");
                     let _ = blur_window.set_focus();
-                    activate_float_note_window_native(&app_handle, &blur_window, "blur_cursor_inside");
-                    request_float_note_renderer_focus(&app_handle, &blur_window, "blur_cursor_inside");
+                    activate_float_note_window_native(
+                        &app_handle,
+                        &blur_window,
+                        "blur_cursor_inside",
+                    );
+                    request_float_note_renderer_focus(
+                        &app_handle,
+                        &blur_window,
+                        "blur_cursor_inside",
+                    );
                     focus_float_note_input(&app_handle, &blur_window, "blur_cursor_inside");
                     return;
                 }
@@ -1062,11 +1271,7 @@ fn activate_float_note_window_native(app: &AppHandle, window: &WebviewWindow, so
                     report.child_focus.children
                 ),
             };
-            append_debug_log(
-                app,
-                "float_note_webview_child_focus",
-                Some(&child_context),
-            );
+            append_debug_log(app, "float_note_webview_child_focus", Some(&child_context));
             append_debug_log(
                 app,
                 "float_note_native_activate",
@@ -1083,7 +1288,7 @@ fn activate_float_note_window_native(app: &AppHandle, window: &WebviewWindow, so
                     child_focus_result = report.child_focus_result
                 )),
             );
-        },
+        }
         Err(error) => append_debug_log(
             app,
             "float_note_native_activate",
@@ -1343,6 +1548,56 @@ fn position_float_note_window(
     );
 }
 
+fn keep_float_note_window_inside_current_monitor(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    source: &str,
+) {
+    let Some(monitor) = window.current_monitor().ok().flatten() else {
+        return;
+    };
+    let Ok(position) = window.outer_position() else {
+        return;
+    };
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+
+    let area = monitor.work_area();
+    let area_pos = area.position;
+    let area_size = area.size;
+    let margin = (FLOAT_NOTE_SCREEN_MARGIN * monitor.scale_factor()).round() as i32;
+    let min_x = area_pos.x + margin;
+    let max_x = area_pos.x + area_size.width as i32 - size.width as i32 - margin;
+    let min_y = area_pos.y + margin;
+    let max_y = area_pos.y + area_size.height as i32 - size.height as i32 - margin;
+    let next_x = position.x.clamp(min_x, max_x.max(min_x));
+    let next_y = position.y.clamp(min_y, max_y.max(min_y));
+
+    if next_x == position.x && next_y == position.y {
+        return;
+    }
+
+    let _ = window.set_position(PhysicalPosition::new(next_x, next_y));
+    append_debug_log(
+        app,
+        "float_note_position_clamped",
+        Some(&format!(
+            "source={source} from={},{} to={},{} size={}x{} monitor={}x{}@{},{}",
+            position.x,
+            position.y,
+            next_x,
+            next_y,
+            size.width,
+            size.height,
+            area_size.width,
+            area_size.height,
+            area_pos.x,
+            area_pos.y
+        )),
+    );
+}
+
 fn show_float_note_window(app: &AppHandle) -> Result<bool, String> {
     append_debug_log(app, "float_note_show_start", None);
     let window = ensure_float_note_window(app)?;
@@ -1365,7 +1620,9 @@ fn show_float_note_window(app: &AppHandle) -> Result<bool, String> {
     focus_float_note_input(app, &window, "show");
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        std::thread::sleep(std::time::Duration::from_millis(FLOAT_NOTE_FIRST_FOCUS_RETRY_MS));
+        std::thread::sleep(std::time::Duration::from_millis(
+            FLOAT_NOTE_FIRST_FOCUS_RETRY_MS,
+        ));
         if let Some(window) = app_handle.get_webview_window("float-note") {
             append_float_note_window_snapshot(&app_handle, &window, "delayed_120ms_before");
             if !window.is_visible().unwrap_or(false) {
@@ -1396,7 +1653,9 @@ fn show_float_note_window(app: &AppHandle) -> Result<bool, String> {
             focus_float_note_input(&app_handle, &window, "delayed_120ms");
             append_float_note_window_snapshot(&app_handle, &window, "delayed_120ms_after");
         }
-        std::thread::sleep(std::time::Duration::from_millis(FLOAT_NOTE_SECOND_FOCUS_RETRY_GAP_MS));
+        std::thread::sleep(std::time::Duration::from_millis(
+            FLOAT_NOTE_SECOND_FOCUS_RETRY_GAP_MS,
+        ));
         if let Some(window) = app_handle.get_webview_window("float-note") {
             append_float_note_window_snapshot(&app_handle, &window, "delayed_320ms_before");
             if !window.is_visible().unwrap_or(false) {
@@ -2038,7 +2297,10 @@ fn notes_open_containing_folder(
 }
 
 #[tauri::command]
-fn files_read_data_url(target_path: String, workspace_path: Option<String>) -> Result<String, String> {
+fn files_read_data_url(
+    target_path: String,
+    workspace_path: Option<String>,
+) -> Result<String, String> {
     let target = PathBuf::from(target_path);
     validate_workspace_content_path(&target, workspace_path.as_deref())?;
     if !target.is_file() {
@@ -2068,7 +2330,10 @@ fn mime_type_for_path(path: &Path) -> &'static str {
     }
 }
 
-fn validate_workspace_content_path(target: &Path, workspace_path: Option<&str>) -> Result<(), String> {
+fn validate_workspace_content_path(
+    target: &Path,
+    workspace_path: Option<&str>,
+) -> Result<(), String> {
     let Some(workspace_path) = workspace_path else {
         return Ok(());
     };
@@ -2331,7 +2596,7 @@ fn float_note_set_height(app: AppHandle, height: u32) -> Result<bool, String> {
     window
         .set_size(LogicalSize::new(FLOAT_NOTE_WIDTH, next_height as f64))
         .map_err(|e| e.to_string())?;
-    position_float_note_window(&app, &window, next_height as f64, false, "set_height");
+    keep_float_note_window_inside_current_monitor(&app, &window, "set_height");
     Ok(true)
 }
 
@@ -2377,7 +2642,7 @@ fn float_note_register_shortcut(app: AppHandle, shortcut: String) -> Result<bool
             *active_shortcut = Some(next_shortcut);
             Ok(true)
         }
-        Err(_) => Ok(false)
+        Err(_) => Ok(false),
     }
 }
 
@@ -2413,8 +2678,12 @@ fn float_note_set_shortcut_enabled(app: AppHandle, enabled: bool) -> Result<bool
 }
 
 #[tauri::command]
-fn system_apps_search(app: AppHandle, workspace_path: String, query: String) -> Result<Vec<SystemAppEntry>, String> {
-    let apps = list_system_apps(&app, &query);
+fn system_apps_search(
+    app: AppHandle,
+    workspace_path: String,
+    query: String,
+) -> Result<Vec<SystemAppEntry>, String> {
+    let apps = list_system_apps(&app, &workspace_path, &query);
     append_debug_log(
         &app,
         "system_apps_search",
@@ -2429,18 +2698,27 @@ fn system_apps_search(app: AppHandle, workspace_path: String, query: String) -> 
 }
 
 #[tauri::command]
-fn system_apps_open(app: AppHandle, workspace_path: String, app_entry: SystemAppEntry) -> Result<bool, String> {
+fn system_apps_open(
+    app: AppHandle,
+    workspace_path: String,
+    app_entry: SystemAppEntry,
+) -> Result<bool, String> {
     append_debug_log(
         &app,
         "system_apps_open",
         Some(&format!(
             "workspace={} name={} path={}",
-            workspace_path,
-            app_entry.name,
-            app_entry.path
+            workspace_path, app_entry.name, app_entry.path
         )),
     );
-    open_system_app_path(&app_entry.path)
+    let opened = open_system_app_path(&app_entry.path)?;
+    if opened {
+        let _ = record_system_app_recent(&workspace_path, &app_entry);
+        if let Some(window) = app.get_webview_window("float-note") {
+            let _ = hide_float_note_window(&app, &window, "system_app_open");
+        }
+    }
+    Ok(opened)
 }
 
 #[tauri::command]
@@ -2625,6 +2903,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(ShortcutStateStore::default())
+        .manage(SystemAppStore::default())
         .setup(|app| {
             append_boot_log_line(app.handle(), "tauri_setup_entered");
             if let Some(main_window) = app.get_webview_window("main") {

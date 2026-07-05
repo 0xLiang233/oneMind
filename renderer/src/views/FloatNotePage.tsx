@@ -37,9 +37,8 @@ const QUICK_INPUT_MAX_LINES = 10
 const QUICK_INPUT_VERTICAL_PADDING = 4
 const INPUT_FOCUS_FALLBACK_DELAY_MS = 140
 const FLOAT_MIN_WINDOW_HEIGHT = 150
-const FLOAT_TOOL_HOME_HEIGHT = 132
-const FLOAT_TOOL_RESULT_HEIGHT = 42
-const FLOAT_TOOL_RESULT_PADDING = 18
+const FLOAT_MAX_WINDOW_HEIGHT = 560
+const FLOAT_WINDOW_HEIGHT_BUFFER = 2
 
 function QuickModeIcon() {
   return (
@@ -67,16 +66,22 @@ export function FloatNotePage() {
   const [status, setStatus] = useState("")
   const [saveState, setSaveState] = useState<SaveState>("idle")
   const [systemApps, setSystemApps] = useState<SystemAppEntry[]>([])
+  const [isSearchingApps, setIsSearchingApps] = useState(false)
+  const [systemAppsError, setSystemAppsError] = useState("")
+  const [systemAppSearchRefreshToken, setSystemAppSearchRefreshToken] = useState(0)
   const [bridgeReadyToken, setBridgeReadyToken] = useState(0)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  const paletteRef = useRef<HTMLElement | null>(null)
   const lastWindowHeightRef = useRef(0)
   const pendingWindowHeightRef = useRef(0)
   const resizeFrameRef = useRef(0)
   const focusTimersRef = useRef<number[]>([])
   const focusRequestIdRef = useRef(0)
+  const appSearchRequestIdRef = useRef(0)
   const debugEnabledRef = useRef(false)
   const requestInputFocusRef = useRef<() => void>(() => undefined)
   const syncPanelHeightRef = useRef<() => void>(() => undefined)
+  const resetPaletteRef = useRef<() => void>(() => undefined)
 
   function getFocusSnapshot(stage: string) {
     const input = inputRef.current
@@ -174,8 +179,9 @@ export function FloatNotePage() {
   }
 
   function scheduleWindowHeight(height: number) {
-    if (height === lastWindowHeightRef.current) return
-    pendingWindowHeightRef.current = height
+    const clampedHeight = Math.min(Math.max(Math.ceil(height), FLOAT_MIN_WINDOW_HEIGHT), FLOAT_MAX_WINDOW_HEIGHT)
+    if (clampedHeight === lastWindowHeightRef.current) return
+    pendingWindowHeightRef.current = clampedHeight
     if (resizeFrameRef.current) return
     resizeFrameRef.current = window.requestAnimationFrame(() => {
       resizeFrameRef.current = 0
@@ -186,20 +192,35 @@ export function FloatNotePage() {
     })
   }
 
-  function getResultHeight() {
-    if (mode !== "tools") return 0
-    if (isToolHome) return FLOAT_TOOL_HOME_HEIGHT
-    return Math.min(Math.max(toolResults.length, 1), 5) * FLOAT_TOOL_RESULT_HEIGHT + FLOAT_TOOL_RESULT_PADDING
+  function invalidateWindowHeightCache() {
+    if (resizeFrameRef.current) {
+      window.cancelAnimationFrame(resizeFrameRef.current)
+      resizeFrameRef.current = 0
+    }
+    lastWindowHeightRef.current = 0
+    pendingWindowHeightRef.current = 0
   }
 
-  function getWindowHeight(inputHeight: number) {
+  function getEstimatedWindowHeight(inputHeight: number) {
     const headerHeight = Math.max(FLOAT_HEADER_BASE_HEIGHT, inputHeight + FLOAT_HEADER_VERTICAL_PADDING)
-    return Math.max(FLOAT_MIN_WINDOW_HEIGHT, Math.ceil(headerHeight + getResultHeight() + FLOAT_HINT_HEIGHT + FLOAT_PAGE_VERTICAL_PADDING))
+    return Math.max(FLOAT_MIN_WINDOW_HEIGHT, Math.ceil(headerHeight + FLOAT_HINT_HEIGHT + FLOAT_PAGE_VERTICAL_PADDING))
+  }
+
+  function getMeasuredWindowHeight(fallbackHeight: number) {
+    const palette = paletteRef.current
+    if (!palette) return fallbackHeight
+    const paletteHeight = Math.max(palette.scrollHeight, palette.getBoundingClientRect().height)
+    return Math.max(fallbackHeight, Math.ceil(paletteHeight + FLOAT_PAGE_VERTICAL_PADDING + FLOAT_WINDOW_HEIGHT_BUFFER))
+  }
+
+  function cancelSystemAppSearch() {
+    appSearchRequestIdRef.current += 1
+    setIsSearchingApps(false)
   }
 
   const commandMatches = useMemo(() => {
     const query = value.trim().toLowerCase()
-    if (!query) return commands
+    if (!query) return []
     return commands.filter((command) => {
       return command.label.toLowerCase().includes(query) || command.keywords.some((keyword) => keyword.includes(query))
     })
@@ -221,9 +242,11 @@ export function FloatNotePage() {
       shortcut: command.shortcut,
       command
     }))
-    return value.trim() ? [...appResults, ...commandResults].slice(0, 12) : [...appResults, ...commandResults].slice(0, 12)
-  }, [commandMatches, systemApps, value])
+    return [...appResults, ...commandResults].slice(0, 12)
+  }, [commandMatches, systemApps])
   const isToolHome = mode === "tools" && !value.trim()
+  const hasToolQuery = mode === "tools" && Boolean(value.trim())
+  const hasAppResults = toolResults.some((result) => result.type === "app")
 
   useEffect(() => {
     function handleBridgeReady() {
@@ -295,7 +318,8 @@ export function FloatNotePage() {
     const unsubscribe = window.oneMind.floatNote.onShown((reason) => {
       writeDebugLog("float_note_on_shown_event", JSON.stringify({ reason, snapshot: JSON.parse(getFocusSnapshot("on_shown")) }))
       if (reason === "shown") {
-        resetPalette()
+        invalidateWindowHeightCache()
+        resetPaletteRef.current()
       }
       window.requestAnimationFrame(() => {
         if (reason === "shown") {
@@ -321,43 +345,82 @@ export function FloatNotePage() {
   }, [bridgeReadyToken])
 
   useEffect(() => {
-    if (!workspace || mode !== "tools") return
+    if (!workspace || mode !== "tools") {
+      appSearchRequestIdRef.current += 1
+      return
+    }
     let disposed = false
+    const requestId = appSearchRequestIdRef.current + 1
+    appSearchRequestIdRef.current = requestId
     const timer = window.setTimeout(() => {
-      void window.oneMind.systemApps.search(workspace.workspacePath, value).then((apps) => {
-        if (!disposed) setSystemApps(apps)
-      })
+      if (disposed || appSearchRequestIdRef.current !== requestId) return
+      setIsSearchingApps(true)
+      setSystemAppsError("")
+      void window.oneMind.systemApps.search(workspace.workspacePath, value)
+        .then((apps) => {
+          if (disposed || appSearchRequestIdRef.current !== requestId) return
+          setSystemApps(apps)
+        })
+        .catch((error: unknown) => {
+          if (disposed || appSearchRequestIdRef.current !== requestId) return
+          console.warn("Failed to search system apps:", error)
+          setSystemApps([])
+          setSystemAppsError("系统应用搜索暂不可用")
+        })
+        .finally(() => {
+          if (!disposed && appSearchRequestIdRef.current === requestId) {
+            setIsSearchingApps(false)
+          }
+        })
     }, value.trim() ? 90 : 0)
     return () => {
       disposed = true
       window.clearTimeout(timer)
     }
-  }, [mode, value, workspace])
+  }, [mode, systemAppSearchRefreshToken, value, workspace])
 
   function syncPanelHeight() {
     const inputHeight = resizeQuickInput()
-    scheduleWindowHeight(getWindowHeight(inputHeight))
+    scheduleWindowHeight(getMeasuredWindowHeight(getEstimatedWindowHeight(inputHeight)))
   }
 
   useEffect(() => {
     requestInputFocusRef.current = requestInputFocus
     syncPanelHeightRef.current = syncPanelHeight
+    resetPaletteRef.current = resetPalette
   })
 
   useLayoutEffect(() => {
     syncPanelHeightRef.current()
-  }, [toolResults.length, mode, saveState])
+  }, [toolResults.length, mode, saveState, value])
+
+  useEffect(() => {
+    if (!window.ResizeObserver) return
+    const observedElements: Element[] = []
+    if (paletteRef.current) observedElements.push(paletteRef.current)
+    if (inputRef.current) observedElements.push(inputRef.current)
+    if (observedElements.length === 0) return
+    const observer = new ResizeObserver(() => {
+      syncPanelHeightRef.current()
+    })
+    observedElements.forEach((element) => observer.observe(element))
+    return () => observer.disconnect()
+  }, [])
 
   function resetPalette() {
-    setMode("quick")
+    cancelSystemAppSearch()
     setValue("")
     setActiveIndex(0)
     setStatus("")
     setSaveState("idle")
     setSystemApps([])
+    setSystemAppsError("")
+    setIsSearchingApps(false)
+    setSystemAppSearchRefreshToken((current) => current + 1)
   }
 
   function switchMode() {
+    cancelSystemAppSearch()
     setMode((current) => {
       const index = modes.findIndex((item) => item.key === current)
       return modes[(index + 1) % modes.length].key
@@ -365,13 +428,14 @@ export function FloatNotePage() {
     setValue("")
     setActiveIndex(0)
     setStatus("")
+    setSystemAppsError("")
     requestInputFocus()
   }
 
   function handleValueChange(event: React.ChangeEvent<HTMLTextAreaElement>) {
     const nextValue = event.target.value
     const inputHeight = resizeQuickInput(nextValue)
-    scheduleWindowHeight(getWindowHeight(inputHeight))
+    scheduleWindowHeight(getMeasuredWindowHeight(getEstimatedWindowHeight(inputHeight)))
     setValue(nextValue)
     setActiveIndex(0)
   }
@@ -427,23 +491,25 @@ export function FloatNotePage() {
     if (mode === "tools") {
       if (event.key === "ArrowDown") {
         event.preventDefault()
-        if (isToolHome) return
+        if (isToolHome || toolResults.length === 0) return
         setActiveIndex((current) => Math.min(current + 1, toolResults.length - 1))
         return
       }
       if (event.key === "ArrowUp") {
         event.preventDefault()
-        if (isToolHome) return
+        if (isToolHome || toolResults.length === 0) return
         setActiveIndex((current) => Math.max(current - 1, 0))
         return
       }
       if (event.key === "ArrowRight") {
         event.preventDefault()
+        if (toolResults.length === 0) return
         setActiveIndex((current) => Math.min(current + 1, toolResults.length - 1))
         return
       }
       if (event.key === "ArrowLeft") {
         event.preventDefault()
+        if (toolResults.length === 0) return
         setActiveIndex((current) => Math.max(current - 1, 0))
         return
       }
@@ -472,7 +538,7 @@ export function FloatNotePage() {
         void window.oneMind.floatNote.hide()
       }
     }}>
-      <section className={"float-note-palette mode-" + mode} onMouseDown={(event) => event.stopPropagation()}>
+      <section ref={paletteRef} className={"float-note-palette mode-" + mode} onMouseDown={(event) => event.stopPropagation()}>
         <header className="float-note-header">
           <button type="button" className="float-note-mode-wheel" onClick={switchMode} aria-label="切换模式">
             <span className="float-note-mode-wheel-track">
@@ -511,7 +577,10 @@ export function FloatNotePage() {
 
         {mode === "tools" && isToolHome ? (
           <section className="float-note-app-grid" aria-label="最近使用">
-            <div className="float-note-section-title">最近使用</div>
+            <div className="float-note-section-title">
+              <span>最近使用</span>
+              {isSearchingApps ? <span className="float-note-section-status">搜索中</span> : null}
+            </div>
             <div className="float-note-app-row">
               {toolResults.map((result, index) => (
                 <button
@@ -527,11 +596,14 @@ export function FloatNotePage() {
                   <span className="float-note-app-name">{result.label}</span>
                 </button>
               ))}
-              {toolResults.length === 0 ? <div className="float-note-empty">未找到系统应用</div> : null}
+              {toolResults.length === 0 ? (
+                <div className="float-note-empty">{systemAppsError || (isSearchingApps ? "正在加载应用..." : "输入关键词搜索应用")}</div>
+              ) : null}
             </div>
           </section>
         ) : mode === "tools" ? (
           <section className="float-note-results">
+            {isSearchingApps ? <div className="float-note-results-status">正在搜索系统应用...</div> : null}
             {toolResults.map((result, index) => (
               <button
                 key={result.id}
@@ -552,7 +624,12 @@ export function FloatNotePage() {
                 {result.type === "command" && result.shortcut ? <kbd>{result.shortcut}</kbd> : null}
               </button>
             ))}
-            {toolResults.length === 0 ? <div className="float-note-empty">没有匹配的工具或应用</div> : null}
+            {toolResults.length === 0 && !isSearchingApps ? (
+              <div className="float-note-empty">{systemAppsError || `没有找到与「${value.trim()}」匹配的工具或应用`}</div>
+            ) : null}
+            {hasToolQuery && !hasAppResults && toolResults.length > 0 && !isSearchingApps ? (
+              <div className="float-note-results-status">未匹配到系统应用，显示 OneMind 指令</div>
+            ) : null}
           </section>
         ) : null}
 
