@@ -11,6 +11,12 @@ type OutletContext = {
   handleSelectWorkspace?: () => Promise<void>
 }
 
+function writeMiniappLog(message: string, context?: string) {
+  void window.oneMind?.diagnostics?.writeLog("renderer-debug", message, context).catch((error: unknown) => {
+    console.warn("Failed to write miniapp log:", error)
+  })
+}
+
 export function SourcesPage() {
   const { workspace } = useOutletContext<OutletContext>()
   const location = useLocation()
@@ -43,12 +49,18 @@ export function SourcesPage() {
 
   useEffect(() => {
     if (!activeUrl) {
-      void window.oneMind.miniappView.hide()
+      writeMiniappLog("miniapp_renderer_hide_no_active_url", `pathname=${location.pathname}`)
+      void window.oneMind.miniappView.hide().catch((error: unknown) => {
+        writeMiniappLog("miniapp_renderer_hide_no_active_url_failed", String(error))
+      })
       return
     }
 
     const host = webviewHostRef.current
-    if (!host) return
+    if (!host) {
+      writeMiniappLog("miniapp_renderer_host_missing", `sourceId=${activeSourceId} url=${activeUrl}`)
+      return
+    }
 
     const viewKey = activeSourceId
     const partition = `persist:onemind-miniapp-${activeSourceId}`
@@ -69,7 +81,13 @@ export function SourcesPage() {
         const height = Math.round(rect.height)
 
         if (x === lastX && y === lastY && width === lastWidth && height === lastHeight) return
-        if (width <= 0 || height <= 0) return
+        if (width <= 0 || height <= 0) {
+          writeMiniappLog(
+            "miniapp_renderer_skip_invalid_bounds",
+            `viewKey=${viewKey} x=${x} y=${y} width=${width} height=${height}`
+          )
+          return
+        }
         lastX = x
         lastY = y
         lastWidth = width
@@ -78,16 +96,28 @@ export function SourcesPage() {
         const bounds = { x, y, width, height }
         if (!hasShownView) {
           hasShownView = true
+          writeMiniappLog(
+            "miniapp_renderer_show",
+            `viewKey=${viewKey} x=${x} y=${y} width=${width} height=${height} url=${activeUrl}`
+          )
           void window.oneMind.miniappView.show({
             viewKey,
             url: activeUrl,
             partition,
             bounds
+          }).catch((error: unknown) => {
+            writeMiniappLog("miniapp_renderer_show_failed", `viewKey=${viewKey} error=${String(error)}`)
           })
           return
         }
 
-        void window.oneMind.miniappView.setBounds({ viewKey, bounds })
+        writeMiniappLog(
+          "miniapp_renderer_set_bounds",
+          `viewKey=${viewKey} x=${x} y=${y} width=${width} height=${height}`
+        )
+        void window.oneMind.miniappView.setBounds({ viewKey, bounds }).catch((error: unknown) => {
+          writeMiniappLog("miniapp_renderer_set_bounds_failed", `viewKey=${viewKey} error=${String(error)}`)
+        })
       })
     }
 
@@ -100,9 +130,12 @@ export function SourcesPage() {
       window.cancelAnimationFrame(frame)
       observer.disconnect()
       window.removeEventListener('resize', syncNativeView)
-      void window.oneMind.miniappView.hide()
+      writeMiniappLog("miniapp_renderer_cleanup_hide", `viewKey=${viewKey}`)
+      void window.oneMind.miniappView.hide().catch((error: unknown) => {
+        writeMiniappLog("miniapp_renderer_cleanup_hide_failed", `viewKey=${viewKey} error=${String(error)}`)
+      })
     }
-  }, [activeSourceId, activeUrl])
+  }, [activeSourceId, activeUrl, location.pathname])
 
   function openSource(source: MiniappSource | { id: string; name: string; url: string }) {
     const nextParams = new URLSearchParams({

@@ -104,6 +104,24 @@ const sidebarIcons: Array<{
   }
 ]
 
+function writeShellInteractionLog(message: string, context?: string) {
+  void window.oneMind?.diagnostics?.writeLog("renderer-debug", message, context).catch((error: unknown) => {
+    console.warn("Failed to write shell interaction log:", error)
+  })
+}
+
+function runWindowAction(name: "minimize" | "maximize" | "close", action: () => Promise<void>) {
+  writeShellInteractionLog("titlebar_window_action_start", `action=${name}`)
+  void action()
+    .then(() => {
+      writeShellInteractionLog("titlebar_window_action_done", `action=${name}`)
+    })
+    .catch((error: unknown) => {
+      writeShellInteractionLog("titlebar_window_action_failed", `action=${name} error=${String(error)}`)
+      console.warn(`Failed to run titlebar action ${name}:`, error)
+    })
+}
+
 function normalizeRoutePath(path: string) {
   return path === "/" ? "/home" : path
 }
@@ -306,6 +324,20 @@ export function AppShell() {
   const activeTabPath = currentRoutePath
   const visibleTabs = useMemo(() => upsertTab(tabs, createTabFromRoute(currentRoutePath)), [currentRoutePath, tabs])
 
+  useEffect(() => {
+    if (location.pathname === "/sources") return
+    writeShellInteractionLog(
+      "miniapp_hide_on_route_leave",
+      `pathname=${location.pathname} search=${location.search || ""}`
+    )
+    void window.oneMind.miniappView.hide().catch((error: unknown) => {
+      writeShellInteractionLog(
+        "miniapp_hide_on_route_leave_failed",
+        `pathname=${location.pathname} error=${String(error)}`
+      )
+    })
+  }, [location.pathname, location.search])
+
   // Load sidebar data
   useEffect(() => {
     async function load() {
@@ -381,6 +413,12 @@ export function AppShell() {
 
   const openRoute = useCallback((path: string) => {
     const nextRoutePath = normalizeRoutePath(path)
+    if (nextRoutePath.split("?")[0] !== "/sources") {
+      writeShellInteractionLog("miniapp_hide_before_route_open", `from=${currentRoutePath} to=${nextRoutePath}`)
+      void window.oneMind.miniappView.hide().catch((error: unknown) => {
+        writeShellInteractionLog("miniapp_hide_before_route_open_failed", `to=${nextRoutePath} error=${String(error)}`)
+      })
+    }
     setTabs(prev => upsertTab(upsertTab(prev, createTabFromRoute(currentRoutePath)), createTabFromRoute(nextRoutePath)))
     navigate(nextRoutePath)
   }, [currentRoutePath, navigate])
@@ -643,6 +681,13 @@ export function AppShell() {
     openRoute("/" + scene)
   }
 
+  function runTitlebarActionFromKeyboard(event: React.KeyboardEvent<HTMLButtonElement>, action: () => void) {
+    if (event.key !== "Enter" && event.key !== " ") return
+    event.preventDefault()
+    event.stopPropagation()
+    action()
+  }
+
   // Render file tree (prototype style with details/summary)
   function renderFileTree(nodes: NoteTreeNode[]): React.ReactNode {
     if (!nodes || nodes.length === 0) {
@@ -755,8 +800,8 @@ export function AppShell() {
       className={"app-shell" + (sidebarCollapsed ? " sidebar-collapsed" : "")}
       style={{ "--sidebar-expanded-width": `${sidebarWidth}px` } as React.CSSProperties}
     >
-      <header className="app-chrome" data-tauri-drag-region>
-        <div className="chrome-brand" data-tauri-drag-region>
+      <header className="app-chrome">
+        <div className="chrome-brand">
           <div className="chrome-brand-identity" aria-hidden="true" data-tauri-drag-region>
             <span className="brand-mark small">O</span>
             <span className="titlebar-brand-name">ONEMIND</span>
@@ -814,14 +859,56 @@ export function AppShell() {
           ))}
         </div>
         <div className="chrome-drag-region" data-tauri-drag-region />
-        <div className="titlebar-controls" onPointerDown={(event) => event.stopPropagation()}>
-          <button className="titlebar-btn" title="最小化" aria-label="最小化" onClick={() => void window.oneMind.window.minimize()}>
+        <div
+          className="titlebar-controls"
+          onPointerDown={(event) => {
+            writeShellInteractionLog(
+              "titlebar_controls_pointer_down",
+              `button=${event.button} x=${Math.round(event.clientX)} y=${Math.round(event.clientY)}`
+            )
+            event.stopPropagation()
+          }}
+        >
+          <button
+            className="titlebar-btn"
+            title="最小化"
+            aria-label="最小化"
+            onClick={(event) => {
+              writeShellInteractionLog("titlebar_minimize_click", `button=${event.button}`)
+              event.preventDefault()
+              event.stopPropagation()
+              runWindowAction("minimize", window.oneMind.window.minimize)
+            }}
+            onKeyDown={(event) => runTitlebarActionFromKeyboard(event, () => runWindowAction("minimize", window.oneMind.window.minimize))}
+          >
             <span className="titlebar-icon titlebar-icon-minimize" aria-hidden="true" />
           </button>
-          <button className="titlebar-btn" title="最大化" aria-label="最大化" onClick={() => void window.oneMind.window.toggleMaximize()}>
+          <button
+            className="titlebar-btn"
+            title="最大化"
+            aria-label="最大化"
+            onClick={(event) => {
+              writeShellInteractionLog("titlebar_maximize_click", `button=${event.button}`)
+              event.preventDefault()
+              event.stopPropagation()
+              runWindowAction("maximize", window.oneMind.window.toggleMaximize)
+            }}
+            onKeyDown={(event) => runTitlebarActionFromKeyboard(event, () => runWindowAction("maximize", window.oneMind.window.toggleMaximize))}
+          >
             <span className="titlebar-icon titlebar-icon-maximize" aria-hidden="true" />
           </button>
-          <button className="titlebar-btn titlebar-btn-close" title="关闭" aria-label="关闭" onClick={() => void window.oneMind.window.close()}>
+          <button
+            className="titlebar-btn titlebar-btn-close"
+            title="关闭"
+            aria-label="关闭"
+            onClick={(event) => {
+              writeShellInteractionLog("titlebar_close_click", `button=${event.button}`)
+              event.preventDefault()
+              event.stopPropagation()
+              runWindowAction("close", window.oneMind.window.close)
+            }}
+            onKeyDown={(event) => runTitlebarActionFromKeyboard(event, () => runWindowAction("close", window.oneMind.window.close))}
+          >
             <span className="titlebar-icon titlebar-icon-close" aria-hidden="true" />
           </button>
         </div>

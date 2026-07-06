@@ -12,7 +12,7 @@
   display: grid;
   grid-template-columns: var(--sidebar-expanded-width) minmax(0, 1fr) minmax(24px, 0.35fr) 132px;
   align-items: center;
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
   user-select: none;
   overflow: hidden;
   transition: grid-template-columns var(--transition-sidebar-collapse);
@@ -112,7 +112,7 @@
   overflow-y: hidden;
   padding: 0 6px;
   scrollbar-width: none;
-  -webkit-app-region: no-drag;
+  -webkit-app-region: drag;
   position: relative;
   z-index: 1;
 }
@@ -518,6 +518,7 @@ body.sidebar-resizing {
   opacity: 0;
   flex: 0 0 16px;
   transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+  -webkit-app-region: no-drag;
 }
 .tab-item:hover .tab-item-close,
 .tab-item.active .tab-item-close {

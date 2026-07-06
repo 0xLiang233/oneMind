@@ -2090,6 +2090,13 @@ fn clamp_view_bounds(bounds: ViewBounds) -> ViewBounds {
     }
 }
 
+fn format_view_bounds(bounds: ViewBounds) -> String {
+    format!(
+        "x={:.0} y={:.0} width={:.0} height={:.0}",
+        bounds.x, bounds.y, bounds.width, bounds.height
+    )
+}
+
 fn is_external_web_url(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https")
 }
@@ -2798,28 +2805,41 @@ fn miniapps_delete(workspace_path: String, id: String) -> Result<bool, String> {
 
 #[tauri::command]
 fn window_minimize(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
+    append_debug_log(&app, "window_minimize_requested", None);
+    if let Some(window) = app.get_window("main") {
         window.minimize().map_err(|e| e.to_string())?;
+        append_debug_log(&app, "window_minimize_done", Some("found=true"));
+    } else {
+        append_debug_log(&app, "window_minimize_skipped", Some("found=false"));
     }
     Ok(())
 }
 
 #[tauri::command]
 fn window_toggle_maximize(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
+    append_debug_log(&app, "window_toggle_maximize_requested", None);
+    if let Some(window) = app.get_window("main") {
         if window.is_maximized().map_err(|e| e.to_string())? {
             window.unmaximize().map_err(|e| e.to_string())?;
+            append_debug_log(&app, "window_toggle_maximize_done", Some("action=unmaximize found=true"));
         } else {
             window.maximize().map_err(|e| e.to_string())?;
+            append_debug_log(&app, "window_toggle_maximize_done", Some("action=maximize found=true"));
         }
+    } else {
+        append_debug_log(&app, "window_toggle_maximize_skipped", Some("found=false"));
     }
     Ok(())
 }
 
 #[tauri::command]
 fn window_close(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
+    append_debug_log(&app, "window_close_requested", None);
+    if let Some(window) = app.get_window("main") {
         window.close().map_err(|e| e.to_string())?;
+        append_debug_log(&app, "window_close_done", Some("found=true"));
+    } else {
+        append_debug_log(&app, "window_close_skipped", Some("found=false"));
     }
     Ok(())
 }
@@ -3010,8 +3030,30 @@ async fn miniapp_view_show(
     bounds: ViewBounds,
 ) -> Result<bool, String> {
     let label = miniapp_window_label(&view_key);
-    let bounds = clamp_view_bounds(bounds);
+    let raw_bounds = bounds;
+    let bounds = clamp_view_bounds(raw_bounds);
+    append_debug_log(
+        &app,
+        "miniapp_view_show",
+        Some(&format!(
+            "label={} view_key={} raw=({}) clamped=({}) url={}",
+            label,
+            view_key,
+            format_view_bounds(raw_bounds),
+            format_view_bounds(bounds),
+            url
+        )),
+    );
     if let Some(webview) = app.get_webview(&label) {
+        append_debug_log(
+            &app,
+            "miniapp_view_show_reuse",
+            Some(&format!(
+                "label={} clamped=({})",
+                label,
+                format_view_bounds(bounds)
+            )),
+        );
         webview
             .set_position(LogicalPosition::new(bounds.x, bounds.y))
             .map_err(|e| e.to_string())?;
@@ -3034,7 +3076,7 @@ async fn miniapp_view_show(
     let new_window_app = app.clone();
     let new_window_label = label.clone();
     let new_window_base_url = base_url.clone();
-    let builder = WebviewBuilder::new(label, WebviewUrl::External(external_url))
+    let builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(external_url))
         .data_directory(
             app.path()
                 .app_data_dir()
@@ -3108,6 +3150,15 @@ async fn miniapp_view_show(
         )
         .map_err(|e| format!("failed to create miniapp view: {e}"))?;
     webview.show().map_err(|e| e.to_string())?;
+    append_debug_log(
+        &app,
+        "miniapp_view_show_created",
+        Some(&format!(
+            "label={} clamped=({})",
+            label,
+            format_view_bounds(bounds)
+        )),
+    );
     Ok(true)
 }
 
@@ -3118,7 +3169,19 @@ fn miniapp_view_set_bounds(
     bounds: ViewBounds,
 ) -> Result<bool, String> {
     let label = miniapp_window_label(&view_key);
-    let bounds = clamp_view_bounds(bounds);
+    let raw_bounds = bounds;
+    let bounds = clamp_view_bounds(raw_bounds);
+    append_debug_log(
+        &app,
+        "miniapp_view_set_bounds",
+        Some(&format!(
+            "label={} view_key={} raw=({}) clamped=({})",
+            label,
+            view_key,
+            format_view_bounds(raw_bounds),
+            format_view_bounds(bounds)
+        )),
+    );
     if let Some(webview) = app.get_webview(&label) {
         webview
             .set_position(LogicalPosition::new(bounds.x, bounds.y))
@@ -3126,6 +3189,12 @@ fn miniapp_view_set_bounds(
         webview
             .set_size(LogicalSize::new(bounds.width, bounds.height))
             .map_err(|e| e.to_string())?;
+    } else {
+        append_debug_log(
+            &app,
+            "miniapp_view_set_bounds_missing",
+            Some(&format!("label={} view_key={}", label, view_key)),
+        );
     }
     Ok(true)
 }
@@ -3134,17 +3203,55 @@ fn miniapp_view_set_bounds(
 fn miniapp_view_hide(app: AppHandle, view_key: Option<String>) -> Result<bool, String> {
     if let Some(view_key) = view_key {
         let label = miniapp_window_label(&view_key);
+        append_debug_log(
+            &app,
+            "miniapp_view_hide_one",
+            Some(&format!("label={} view_key={}", label, view_key)),
+        );
         if let Some(webview) = app.get_webview(&label) {
             webview.hide().map_err(|e| e.to_string())?;
+        } else {
+            append_debug_log(
+                &app,
+                "miniapp_view_hide_one_missing",
+                Some(&format!("label={} view_key={}", label, view_key)),
+            );
         }
         return Ok(true);
     }
 
+    let mut hidden_count = 0usize;
+    let mut failed_count = 0usize;
     for (label, webview) in app.webviews() {
         if label.starts_with("miniapp-") {
-            let _ = webview.hide();
+            match webview.hide() {
+                Ok(()) => {
+                    hidden_count += 1;
+                    append_debug_log(
+                        &app,
+                        "miniapp_view_hide_all_one",
+                        Some(&format!("label={}", label)),
+                    );
+                }
+                Err(error) => {
+                    failed_count += 1;
+                    append_debug_log(
+                        &app,
+                        "miniapp_view_hide_all_one_failed",
+                        Some(&format!("label={} error={}", label, error)),
+                    );
+                }
+            }
         }
     }
+    append_debug_log(
+        &app,
+        "miniapp_view_hide_all_done",
+        Some(&format!(
+            "hidden_count={} failed_count={}",
+            hidden_count, failed_count
+        )),
+    );
     Ok(true)
 }
 
