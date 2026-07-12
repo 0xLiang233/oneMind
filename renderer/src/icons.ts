@@ -2,6 +2,7 @@ export type { LucideIcon, LucideProps } from "lucide-react"
 
 export {
   Activity,
+  AlertTriangle,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -15,6 +16,7 @@ export {
   FolderOpen,
   FolderPlus,
   Grid3X3,
+  GitBranch,
   Home,
   Image,
   Info,
@@ -27,6 +29,7 @@ export {
   PenLine,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   Sparkles,

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useLocation, useOutletContext } from "react-router-dom"
 import { MarkdownEditor } from "../components/MarkdownEditor"
 import { trackActivity } from "../activity"
+import { registerSyncSaveParticipant } from "../sync/saveBarrier"
 
 type OutletContext = {
   workspace: WorkspaceMeta | null
@@ -18,6 +19,7 @@ export function NotesPage() {
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState("从侧边栏选择笔记开始编辑")
   const [editorMode, setEditorMode] = useState<"rich" | "source">("rich")
+  const savePromiseRef = useRef<Promise<void> | null>(null)
 
   const selectedName = useMemo(() => {
     if (!selectedSidebarPath) return "未选择笔记"
@@ -76,11 +78,14 @@ export function NotesPage() {
   }, [selectedSidebarPath, workspace?.workspacePath])
 
   const handleSave = useCallback(async () => {
-    if (!selectedSidebarPath || saving) return
-    setSaving(true)
-    try {
-      await window.oneMind.notes.write(selectedSidebarPath, content)
-      setSavedContent(content)
+    if (!selectedSidebarPath) return
+    if (savePromiseRef.current) return savePromiseRef.current
+
+    const contentToSave = content
+    const operation = (async () => {
+      setSaving(true)
+      await window.oneMind.notes.write(selectedSidebarPath, contentToSave)
+      setSavedContent(contentToSave)
       setStatus("已保存")
       trackActivity(workspace?.workspacePath, {
         module: "notes",
@@ -89,8 +94,39 @@ export function NotesPage() {
         targetId: selectedSidebarPath,
         targetLabel: selectedName
       })
-    } finally { setSaving(false) }
-  }, [content, saving, selectedName, selectedSidebarPath, workspace?.workspacePath])
+    })().finally(() => {
+      setSaving(false)
+      savePromiseRef.current = null
+    })
+    savePromiseRef.current = operation
+    return operation
+  }, [content, selectedName, selectedSidebarPath, workspace?.workspacePath])
+
+  useEffect(() => {
+    return registerSyncSaveParticipant(async () => {
+      if (content !== savedContent) {
+        await handleSave()
+      } else if (savePromiseRef.current) {
+        await savePromiseRef.current
+      }
+    })
+  }, [content, handleSave, savedContent])
+
+  useEffect(() => {
+    async function reloadAfterSync() {
+      if (!selectedSidebarPath || content !== savedContent) return
+      try {
+        const next = await window.oneMind.notes.read(selectedSidebarPath)
+        setContent(next)
+        setSavedContent(next)
+        setStatus("已同步")
+      } catch {
+        setStatus("同步后文件已被移动或删除")
+      }
+    }
+    window.addEventListener("onemind-workspace-changed", reloadAfterSync)
+    return () => window.removeEventListener("onemind-workspace-changed", reloadAfterSync)
+  }, [content, savedContent, selectedSidebarPath])
 
   useEffect(() => {
     if (!selectedSidebarPath || !isDirty || saving) return

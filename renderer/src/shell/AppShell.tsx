@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Outlet, useLocation, useNavigate } from "react-router-dom"
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu"
 import { trackActivity } from "../activity"
+import { useWorkspaceSync } from "../sync/useWorkspaceSync"
 import type { LucideIcon } from "../icons"
 import {
   ChevronRight,
@@ -482,11 +483,13 @@ export function AppShell() {
       || target.path.startsWith(workspace.assetsPath + "/")
   }
 
-  async function refreshNoteTree() {
+  const refreshNoteTree = useCallback(async () => {
     if (!workspace) return
     const nextTree = await window.oneMind.notes.list(workspace.workspacePath)
     setNoteTree(nextTree)
-  }
+  }, [workspace])
+
+  const workspaceSync = useWorkspaceSync(workspace?.workspacePath ?? "", refreshNoteTree)
 
   async function moveNodeToDirectory(node: NoteTreeNode, relativeDir: string) {
     if (!workspace) return
@@ -1039,7 +1042,17 @@ export function AppShell() {
         {/* Content */}
         <main className="content">
           <section className="content-panel">
-            <Outlet context={{ workspace, defaultPath, busy, bridgeReady, handleCreateDefault, handleSelectWorkspace, selectedSidebarPath, setSelectedSidebarPath }} />
+            <Outlet context={{
+              workspace,
+              defaultPath,
+              busy,
+              bridgeReady,
+              handleCreateDefault,
+              handleSelectWorkspace,
+              selectedSidebarPath,
+              setSelectedSidebarPath,
+              workspaceSync
+            }} />
           </section>
         </main>
       </div>

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use windows::core::Interface;
 mod float_note_focus;
+mod sync;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 use std::{
@@ -3291,6 +3292,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(ShortcutStateStore::default())
         .manage(SystemAppStore::default())
+        .manage(sync::SyncState::default())
         .setup(|app| {
             append_boot_log_line(app.handle(), "tauri_setup_entered");
             if let Some(main_window) = app.get_webview_window("main") {
@@ -3351,6 +3353,15 @@ pub fn run() {
             write_shell_log,
             diagnostics_get_debug_mode,
             diagnostics_open_devtools,
+            sync::sync_read_config,
+            sync::sync_write_config,
+            sync::sync_get_status,
+            sync::sync_preflight,
+            sync::sync_write_identity,
+            sync::sync_test_remote,
+            sync::sync_authenticate_github,
+            sync::sync_initialize,
+            sync::sync_run,
             workspace_get_default_path,
             workspace_select,
             workspace_init_default,

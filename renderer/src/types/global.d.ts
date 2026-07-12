@@ -75,6 +75,64 @@ type DebugModeReport = {
   source: string
 }
 
+type SyncPhase = 'idle' | 'initializing' | 'committing' | 'fetching' | 'rebasing' | 'pushing' | 'conflicted' | 'error'
+
+type SyncConfig = {
+  enabled: boolean
+  remoteUrl: string
+  branch: string
+  autoSyncIntervalMinutes: number
+  pullOnStartup: boolean
+}
+
+type SyncStatus = {
+  available: boolean
+  configured: boolean
+  repositoryInitialized: boolean
+  phase: SyncPhase
+  branch: string
+  remoteUrl: string
+  ahead: number
+  behind: number
+  changedFiles: number
+  conflicts: string[]
+  message: string
+}
+
+type SyncResult = {
+  success: boolean
+  status: SyncStatus
+}
+
+type GitIdentity = {
+  name: string
+  email: string
+}
+
+type SyncPreflight = {
+  gitAvailable: boolean
+  gitVersion: string
+  repositoryInitialized: boolean
+  identityConfigured: boolean
+  identity: GitIdentity
+  credentialHelper: string
+  credentialHelperReady: boolean
+  remoteUrl: string
+  remoteConfigured: boolean
+}
+
+type RemoteCheck = {
+  success: boolean
+  state: 'empty' | 'has_history' | 'authentication_required' | 'repository_not_found' | 'network_unavailable' | 'unreachable'
+  message: string
+  remoteUrl: string
+}
+
+type AuthenticationResult = {
+  success: boolean
+  message: string
+}
+
 type ActivityEventInput = {
   kind?: 'instant' | 'session'
   module: string
@@ -203,6 +261,18 @@ interface Window {
       getDebugMode: () => Promise<DebugModeReport>
       writeLog: (level: string, message: string, context?: string) => Promise<void>
       openDevtools: (label?: string) => Promise<boolean>
+    }
+    sync: {
+      readConfig: (workspacePath: string) => Promise<SyncConfig>
+      writeConfig: (workspacePath: string, config: SyncConfig) => Promise<SyncConfig>
+      getStatus: (workspacePath: string) => Promise<SyncStatus>
+      preflight: (workspacePath: string) => Promise<SyncPreflight>
+      writeIdentity: (workspacePath: string, identity: GitIdentity) => Promise<GitIdentity>
+      testRemote: (workspacePath: string, remoteUrl: string) => Promise<RemoteCheck>
+      authenticateGitHub: (workspacePath: string, username?: string) => Promise<AuthenticationResult>
+      initialize: (workspacePath: string, config: SyncConfig) => Promise<SyncResult>
+      run: (workspacePath: string) => Promise<SyncResult>
+      onStatusChanged: (callback: (status: SyncStatus) => void) => () => void
     }
   }
 }

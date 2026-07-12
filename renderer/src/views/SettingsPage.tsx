@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { useOutletContext } from "react-router-dom"
+import { useLocation, useOutletContext } from "react-router-dom"
 import { ActivitySettingsPanel } from "./ActivitySettingsPanel"
+import { SyncSettingsPanel } from "./SyncSettingsPanel"
 import type { LucideIcon } from "../icons"
-import { Activity, FileText, Grid3X3, Info, Settings, Sun } from "../icons"
+import { Activity, FileText, GitBranch, Grid3X3, Info, Settings, Sun } from "../icons"
 
 type OutletContext = {
   workspace: WorkspaceMeta | null
@@ -11,9 +12,21 @@ type OutletContext = {
   bridgeReady?: boolean
   handleCreateDefault?: () => Promise<void>
   handleSelectWorkspace?: () => Promise<void>
+  workspaceSync: {
+    config: SyncConfig
+    status: SyncStatus
+    preflight: SyncPreflight
+    error: string
+    run: () => Promise<SyncResult | null>
+    saveConfig: (config: SyncConfig) => Promise<SyncConfig>
+    saveIdentity: (identity: GitIdentity) => Promise<GitIdentity>
+    testRemote: (remoteUrl: string) => Promise<RemoteCheck | null>
+    authenticateGitHub: (username?: string) => Promise<AuthenticationResult | null>
+    initialize: (config: SyncConfig) => Promise<SyncResult | null>
+  }
 }
 
-type SettingsGroup = "appearance" | "general" | "miniapps" | "activity" | "editor" | "about"
+type SettingsGroup = "appearance" | "general" | "sync" | "miniapps" | "activity" | "editor" | "about"
 
 const defaultPreferences: AppPreferences = {
   theme: "system",
@@ -39,6 +52,7 @@ const navGroups: Array<{ section: string; items: Array<{ key: SettingsGroup; lab
     section: "通用",
     items: [
       { key: "general", label: "通用", icon: Settings },
+      { key: "sync", label: "同步", icon: GitBranch },
       { key: "miniapps", label: "小程序", icon: Grid3X3 },
       { key: "activity", label: "活跃度", icon: Activity }
     ]
@@ -117,9 +131,15 @@ function keyEventToDisplayShortcut(event: ShortcutKeyEvent) {
 }
 
 export function SettingsPage() {
-  const { workspace, defaultPath, busy, bridgeReady, handleCreateDefault, handleSelectWorkspace } =
+  const location = useLocation()
+  const { workspace, defaultPath, busy, bridgeReady, handleCreateDefault, handleSelectWorkspace, workspaceSync } =
     useOutletContext<OutletContext>()
-  const [activeGroup, setActiveGroup] = useState<SettingsGroup>("appearance")
+  const requestedGroup = new URLSearchParams(location.search).get("group")
+  const initialGroup = navGroups.flatMap((group) => group.items).some((item) => item.key === requestedGroup)
+    ? requestedGroup as SettingsGroup
+    : "appearance"
+  const [activeGroup, setActiveGroup] = useState<SettingsGroup>(initialGroup)
+  const [lastRequestedGroup, setLastRequestedGroup] = useState(requestedGroup)
   const [preferences, setPreferences] = useState<AppPreferences>(defaultPreferences)
   const [miniapps, setMiniapps] = useState<MiniappSource[]>([])
   const [failedMiniappIcons, setFailedMiniappIcons] = useState<Record<string, boolean>>({})
@@ -136,6 +156,9 @@ export function SettingsPage() {
   const previewShortcutFromEventRef = useRef<(event: ShortcutKeyEvent) => void>(() => undefined)
 
   const workspacePath = workspace?.workspacePath ?? ""
+  const pendingSyncFiles = workspaceSync.config.enabled && workspaceSync.status.configured
+    ? workspaceSync.status.changedFiles
+    : 0
 
   function clearStatusTimer() {
     if (statusTimerRef.current !== null) {
@@ -175,6 +198,13 @@ export function SettingsPage() {
   useEffect(() => {
     return () => clearStatusTimer()
   }, [])
+
+  if (requestedGroup !== lastRequestedGroup) {
+    setLastRequestedGroup(requestedGroup)
+    if (requestedGroup && navGroups.flatMap((group) => group.items).some((item) => item.key === requestedGroup)) {
+      setActiveGroup(requestedGroup as SettingsGroup)
+    }
+  }
 
   const activeTitle = useMemo(() => {
     return navGroups.flatMap((group) => group.items).find((item) => item.key === activeGroup)?.label ?? "设置"
@@ -382,7 +412,12 @@ export function SettingsPage() {
                     <span className="settings-nav-icon">
                       <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
                     </span>
-                    {item.label}
+                    <span className="settings-nav-label">{item.label}</span>
+                    {item.key === "sync" && pendingSyncFiles > 0 ? (
+                      <span className="settings-nav-count" aria-label={`${pendingSyncFiles} 个文件待同步`}>
+                        {pendingSyncFiles > 99 ? "99+" : pendingSyncFiles}
+                      </span>
+                    ) : null}
                   </button>
                 )
               })}
@@ -541,6 +576,25 @@ export function SettingsPage() {
                 </div>
               </div>
             </>
+          ) : null}
+
+          {activeGroup === "sync" ? (
+            workspacePath ? (
+              <SyncSettingsPanel
+                config={workspaceSync.config}
+                status={workspaceSync.status}
+                preflight={workspaceSync.preflight}
+                error={workspaceSync.error}
+                onInitialize={workspaceSync.initialize}
+                onRun={workspaceSync.run}
+                onSaveConfig={workspaceSync.saveConfig}
+                onSaveIdentity={workspaceSync.saveIdentity}
+                onTestRemote={workspaceSync.testRemote}
+                onAuthenticateGitHub={workspaceSync.authenticateGitHub}
+              />
+            ) : (
+              <div className="settings-empty">创建或选择工作区后即可配置同步。</div>
+            )
           ) : null}
 
           {activeGroup === "miniapps" ? (

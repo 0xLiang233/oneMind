@@ -21,6 +21,40 @@ const unsupportedShellReport: ShellReport = {
   generatedAt: ""
 }
 
+const unsupportedSyncStatus: SyncStatus = {
+  available: false,
+  configured: false,
+  repositoryInitialized: false,
+  phase: "idle",
+  branch: "main",
+  remoteUrl: "",
+  ahead: 0,
+  behind: 0,
+  changedFiles: 0,
+  conflicts: [],
+  message: "当前桌面外壳不支持同步。"
+}
+
+const unsupportedSyncConfig: SyncConfig = {
+  enabled: false,
+  remoteUrl: "",
+  branch: "main",
+  autoSyncIntervalMinutes: 0,
+  pullOnStartup: false
+}
+
+const unsupportedSyncPreflight: SyncPreflight = {
+  gitAvailable: false,
+  gitVersion: "",
+  repositoryInitialized: false,
+  identityConfigured: false,
+  identity: { name: "", email: "" },
+  credentialHelper: "",
+  credentialHelperReady: false,
+  remoteUrl: "",
+  remoteConfigured: false
+}
+
 function unsupported<T>(feature: string): Promise<T> {
   return Promise.reject(new Error(`${feature} is not available in this desktop shell yet.`))
 }
@@ -130,6 +164,23 @@ export function installOneMindBridgeFallback() {
       getDebugMode: () => Promise.resolve({ enabled: false, source: "unsupported" }),
       writeLog: () => Promise.resolve(),
       openDevtools: () => Promise.resolve(false)
+    },
+    sync: {
+      readConfig: () => Promise.resolve(unsupportedSyncConfig),
+      writeConfig: (_workspacePath, config) => Promise.resolve(config),
+      getStatus: () => Promise.resolve(unsupportedSyncStatus),
+      preflight: () => Promise.resolve(unsupportedSyncPreflight),
+      writeIdentity: (_workspacePath, identity) => Promise.resolve(identity),
+      testRemote: (_workspacePath, remoteUrl) => Promise.resolve({
+        success: false,
+        state: "unreachable",
+        message: "当前桌面外壳不支持远程连接测试。",
+        remoteUrl
+      }),
+      authenticateGitHub: () => unsupported<AuthenticationResult>("sync.authenticateGitHub"),
+      initialize: () => unsupported<SyncResult>("sync.initialize"),
+      run: () => unsupported<SyncResult>("sync.run"),
+      onStatusChanged: () => () => undefined
     }
   }
 }

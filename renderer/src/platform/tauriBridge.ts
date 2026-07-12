@@ -125,6 +125,35 @@ export function createTauriBridge(): Window["oneMind"] {
       getDebugMode: () => invoke<DebugModeReport>("diagnostics_get_debug_mode"),
       writeLog: (level, message, context) => invoke<void>("write_shell_log", { level, message, context }),
       openDevtools: (label) => invoke<boolean>("diagnostics_open_devtools", { label })
+    },
+    sync: {
+      readConfig: (workspacePath) => invoke<SyncConfig>("sync_read_config", { workspacePath }),
+      writeConfig: (workspacePath, config) => invoke<SyncConfig>("sync_write_config", { workspacePath, config }),
+      getStatus: (workspacePath) => invoke<SyncStatus>("sync_get_status", { workspacePath }),
+      preflight: (workspacePath) => invoke<SyncPreflight>("sync_preflight", { workspacePath }),
+      writeIdentity: (workspacePath, identity) =>
+        invoke<GitIdentity>("sync_write_identity", { workspacePath, identity }),
+      testRemote: (workspacePath, remoteUrl) =>
+        invoke<RemoteCheck>("sync_test_remote", { workspacePath, remoteUrl }),
+      authenticateGitHub: (workspacePath, username) =>
+        invoke<AuthenticationResult>("sync_authenticate_github", { workspacePath, username }),
+      initialize: (workspacePath, config) => invoke<SyncResult>("sync_initialize", { workspacePath, config }),
+      run: (workspacePath) => invoke<SyncResult>("sync_run", { workspacePath }),
+      onStatusChanged: (callback) => {
+        let disposed = false
+        let unlisten: (() => void) | null = null
+        void listen<SyncStatus>("sync-status-changed", (event) => callback(event.payload)).then((nextUnlisten) => {
+          if (disposed) {
+            nextUnlisten()
+            return
+          }
+          unlisten = nextUnlisten
+        })
+        return () => {
+          disposed = true
+          unlisten?.()
+        }
+      }
     }
   }
 }
