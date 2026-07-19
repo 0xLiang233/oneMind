@@ -281,7 +281,7 @@ export function SettingsPage() {
       const detail = error instanceof Error ? error.message : String(error)
       void window.oneMind.diagnostics.writeLog("error", "update_check_failed", detail)
       setUpdatePhase("error")
-      setUpdateMessage("暂时无法获取更新信息，请检查网络后重试。")
+      setUpdateMessage("暂时无法检查更新，请稍后再试。")
     }
   }
 
