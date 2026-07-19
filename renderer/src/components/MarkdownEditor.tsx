@@ -5,6 +5,7 @@ import { EditorView } from "@codemirror/view"
 import { CrepeBuilder } from "@milkdown/crepe"
 import { codeMirror } from "@milkdown/crepe/feature/code-mirror"
 import "@milkdown/crepe/theme/classic.css"
+import "../styles/milkdown-adapter.css"
 import {
   addBlockTypeCommand,
   blockquoteSchema,
@@ -32,14 +33,19 @@ import {
   deleteRow,
   deleteTable
 } from "prosemirror-tables"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import mermaid from "mermaid"
+import { oneMindImageFeature, oneMindImageRenameEvent } from "../editor/oneMindImage"
+import { Pencil } from "../icons"
 import { ContextMenu, type ContextMenuItem } from "../shell/ContextMenu"
 
 type MarkdownEditorProps = {
   value: string
   onChange: (value: string) => void
+  workspacePath: string
+  notePath: string
   readonly?: boolean
+  onError?: (message: string) => void
 }
 
 type MermaidDragState = {
@@ -51,7 +57,21 @@ type MermaidDragState = {
   scrollTop: number
 }
 
-export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEditorProps) {
+type EditorContextMenuState = {
+  x: number
+  y: number
+  inTable: boolean
+  imageNode: HTMLElement | null
+}
+
+export function MarkdownEditor({
+  value,
+  onChange,
+  workspacePath,
+  notePath,
+  readonly = false,
+  onError
+}: MarkdownEditorProps) {
   const parsedDocument = useMemo(() => parseMarkdownDocument(value), [value])
   const parsedDocumentRef = useRef(parsedDocument)
   const readonlyRef = useRef(readonly)
@@ -59,9 +79,55 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
   const editorRootRef = useRef<HTMLDivElement | null>(null)
   const editorRef = useRef<CrepeBuilder | null>(null)
   const onChangeRef = useRef(onChange)
+  const onErrorRef = useRef(onError)
+  const resolvedImageCacheRef = useRef(new Map<string, Promise<string>>())
   const selectionRangeRef = useRef<Range | null>(null)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; inTable: boolean } | null>(null)
+  const [contextMenu, setContextMenu] = useState<EditorContextMenuState | null>(null)
   const [slashMenu, setSlashMenu] = useState<{ x: number; y: number; activeIndex: number } | null>(null)
+
+  const uploadImage = useCallback(async (file: File) => {
+    try {
+      const dataBase64 = await readFileAsBase64(file)
+      const saved = await window.oneMind.notes.assets.savePastedImage(workspacePath, notePath, {
+        mimeType: file.type,
+        dataBase64
+      })
+      return saved.markdownPath
+    } catch (error) {
+      const message = `图片保存失败: ${String(error)}`
+      onErrorRef.current?.(message)
+      throw error
+    }
+  }, [notePath, workspacePath])
+
+  const resolveImageURL = useCallback((url: string) => {
+    if (!isLocalMarkdownImage(url)) return url
+
+    const cacheKey = `${notePath}\n${url}`
+    const cached = resolvedImageCacheRef.current.get(cacheKey)
+    if (cached) return cached
+
+    const resolved = window.oneMind.notes.assets.resolveImage(workspacePath, notePath, url)
+      .catch((error) => {
+        resolvedImageCacheRef.current.delete(cacheKey)
+        onErrorRef.current?.(`图片加载失败: ${String(error)}`)
+        throw error
+      })
+    resolvedImageCacheRef.current.set(cacheKey, resolved)
+    return resolved
+  }, [notePath, workspacePath])
+
+  const renameImage = useCallback(async (url: string, newName: string) => {
+    const renamedURL = await window.oneMind.notes.assets.renameImage(
+      workspacePath,
+      notePath,
+      url,
+      newName
+    )
+    resolvedImageCacheRef.current.delete(`${notePath}\n${url}`)
+    resolvedImageCacheRef.current.delete(`${notePath}\n${renamedURL}`)
+    return renamedURL
+  }, [notePath, workspacePath])
 
   function updateProperties(nextProperties: MarkdownProperty[]) {
     onChangeRef.current(mergeMarkdownDocument(serializeFrontmatterProperties(nextProperties), parsedDocument.body))
@@ -80,6 +146,15 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
       { label: "删除表格", action: "table-delete-table", danger: true, disabled: readonly }
     ]
   ], [readonly])
+
+  const imageMenuItems = useMemo<ContextMenuItem[][]>(() => [[
+    {
+      label: "重命名图片",
+      action: "image-rename",
+      icon: <Pencil aria-hidden="true" />,
+      disabled: readonly
+    }
+  ]], [readonly])
 
   const menuItems = useMemo<ContextMenuItem[][]>(() => [
     [
@@ -119,6 +194,10 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
   }, [onChange])
 
   useEffect(() => {
+    onErrorRef.current = onError
+  }, [onError])
+
+  useEffect(() => {
     parsedDocumentRef.current = parsedDocument
   }, [parsedDocument])
 
@@ -145,6 +224,11 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
     const editor = new CrepeBuilder({
       root,
       defaultValue: parsedDocumentRef.current.body
+    }).addFeature(oneMindImageFeature, {
+      onUpload: uploadImage,
+      resolveImageURL,
+      renameImage,
+      onError: (message: string) => onErrorRef.current?.(message)
     }).addFeature(codeMirror, {
       languages,
       extensions: [onemindCodeMirrorTheme],
@@ -189,7 +273,7 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
       editorRef.current = null
       void editor.destroy()
     }
-  }, [])
+  }, [renameImage, resolveImageURL, uploadImage])
 
   useEffect(() => {
     editorRef.current?.setReadonly(readonly)
@@ -321,13 +405,16 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
   function handleContextMenu(e: React.MouseEvent) {
     if (!rootRef.current?.contains(e.target as Node)) return
     e.preventDefault()
-    const inTable = Boolean((e.target as Element).closest("td, th"))
+    const target = e.target instanceof Element ? e.target : null
+    const inTable = Boolean(target?.closest("td, th"))
+    const candidateImageNode = target?.closest<HTMLElement>(".onemind-image-node") ?? null
+    const imageNode = candidateImageNode?.dataset.renamable === "true" ? candidateImageNode : null
     if (inTable) {
       focusEditorAtCoords(e.clientX, e.clientY)
     } else {
       saveCurrentSelection()
     }
-    setContextMenu({ x: e.clientX, y: e.clientY, inTable })
+    setContextMenu({ x: e.clientX, y: e.clientY, inTable, imageNode })
   }
 
   function focusEditorAtCoords(x: number, y: number) {
@@ -426,6 +513,10 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
   }
 
   async function handleMenuAction(action: string) {
+    if (action === "image-rename") {
+      contextMenu?.imageNode?.dispatchEvent(new Event(oneMindImageRenameEvent))
+      return
+    }
     restoreEditorSelection()
 
     if (action.startsWith("table-") && runTableCommand(action)) return
@@ -435,6 +526,11 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
       return
     }
     if (action === "paste") {
+      const images = await readClipboardImages()
+      if (images.length > 0) {
+        await insertUploadedImages(images)
+        return
+      }
       const text = await navigator.clipboard?.readText?.().catch(() => "")
       if (text) insertMarkdownText(text)
       return
@@ -496,6 +592,16 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
     if (readonly) return
     document.execCommand("insertText", false, text)
     saveCurrentSelection()
+  }
+
+  async function insertUploadedImages(files: File[]) {
+    try {
+      const markdownPaths = await Promise.all(files.map(uploadImage))
+      const markdown = markdownPaths.map((path) => `![image](${path})`).join("\n\n")
+      pasteMarkdown(markdown)
+    } catch {
+      // uploadImage reports the actionable error through onError.
+    }
   }
 
   function pasteMarkdown(markdown: string) {
@@ -606,7 +712,11 @@ export function MarkdownEditor({ value, onChange, readonly = false }: MarkdownEd
       {contextMenu && (
         <ContextMenu
           id="editor-context-menu"
-          items={contextMenu.inTable ? [...tableMenuItems, ...menuItems] : menuItems}
+          items={contextMenu.imageNode
+            ? [...imageMenuItems, ...menuItems]
+            : contextMenu.inTable
+              ? [...tableMenuItems, ...menuItems]
+              : menuItems}
           x={contextMenu.x}
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
@@ -824,6 +934,45 @@ function prepareMermaidSvg(svg: SVGSVGElement | null) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
+}
+
+async function readClipboardImages() {
+  if (!navigator.clipboard?.read) return []
+  try {
+    const items = await navigator.clipboard.read()
+    const files: File[] = []
+    for (const item of items) {
+      const imageType = item.types.find((type) => type.startsWith("image/"))
+      if (!imageType) continue
+      const blob = await item.getType(imageType)
+      files.push(new File([blob], "clipboard-image", { type: imageType }))
+    }
+    return files
+  } catch {
+    return []
+  }
+}
+
+function readFileAsBase64(file: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error ?? new Error("无法读取图片"))
+    reader.onload = () => {
+      const result = reader.result
+      if (typeof result !== "string") {
+        reject(new Error("无法读取图片"))
+        return
+      }
+      resolve(result.slice(result.indexOf(",") + 1))
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+function isLocalMarkdownImage(url: string) {
+  const value = url.trim()
+  if (!value || value.startsWith("#") || value.startsWith("//")) return false
+  return !/^[a-z][a-z\d+.-]*:/i.test(value)
 }
 
 function createPreviewToggleMarkup(previewOnlyMode: boolean) {

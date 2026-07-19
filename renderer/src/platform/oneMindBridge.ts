@@ -113,7 +113,12 @@ export function installOneMindBridgeFallback() {
       move: () => unsupported<string>("notes.move"),
       delete: () => Promise.resolve(false),
       openFile: () => Promise.resolve(false),
-      openContainingFolder: () => Promise.resolve(false)
+      openContainingFolder: () => Promise.resolve(false),
+      assets: {
+        savePastedImage: () => unsupported<SavedNoteAsset>("notes.assets.savePastedImage"),
+        resolveImage: () => unsupported<string>("notes.assets.resolveImage"),
+        renameImage: () => unsupported<string>("notes.assets.renameImage")
+      }
     },
     files: {
       readDataUrl: () => unsupported<string>("files.readDataUrl")

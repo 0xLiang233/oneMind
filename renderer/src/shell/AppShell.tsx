@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Outlet, useLocation, useNavigate } from "react-router-dom"
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu"
 import { trackActivity } from "../activity"
+import { flushBeforeSync } from "../sync/saveBarrier"
 import { useWorkspaceSync } from "../sync/useWorkspaceSync"
 import type { LucideIcon } from "../icons"
 import {
@@ -236,6 +237,48 @@ function upsertTab(tabs: Tab[], nextTab: Tab | null) {
     return withoutHome.map(tab => tab.path === nextTab.path ? nextTab : tab)
   }
   return [...withoutHome, nextTab]
+}
+
+function remapDescendantPath(path: string, oldPath: string, newPath: string) {
+  if (path === oldPath) return newPath
+  if (path.startsWith(oldPath + "\\") || path.startsWith(oldPath + "/")) {
+    return newPath + path.slice(oldPath.length)
+  }
+  return path
+}
+
+function getNotePathFromRoute(routePath: string) {
+  const [rawPathname, rawSearch = ""] = routePath.split("?")
+  if (normalizeRoutePath(rawPathname) !== "/notes") return null
+  return new URLSearchParams(rawSearch).get("selected")
+}
+
+function remapNoteRoute(routePath: string, oldPath: string, newPath: string) {
+  const selectedPath = getNotePathFromRoute(routePath)
+  if (!selectedPath) return routePath
+  const nextSelectedPath = remapDescendantPath(selectedPath, oldPath, newPath)
+  if (nextSelectedPath === selectedPath) return routePath
+
+  const [rawPathname, rawSearch = ""] = routePath.split("?")
+  const params = new URLSearchParams(rawSearch)
+  params.set("selected", nextSelectedPath)
+  return `${normalizeRoutePath(rawPathname)}?${params.toString()}`
+}
+
+function remapNoteTabs(tabs: Tab[], oldPath: string, newPath: string) {
+  return tabs.reduce<Tab[]>((result, tab) => {
+    const nextPath = remapNoteRoute(tab.path, oldPath, newPath)
+    const nextTab = nextPath === tab.path ? tab : createTabFromRoute(nextPath)
+    if (nextTab && !result.some((item) => item.path === nextTab.path)) result.push(nextTab)
+    return result
+  }, [])
+}
+
+function removeNoteTabs(tabs: Tab[], removedPath: string) {
+  return tabs.filter((tab) => {
+    const selectedPath = getNotePathFromRoute(tab.path)
+    return !selectedPath || remapDescendantPath(selectedPath, removedPath, "") === selectedPath
+  })
 }
 
 export function AppShell() {
@@ -491,17 +534,32 @@ export function AppShell() {
 
   const workspaceSync = useWorkspaceSync(workspace?.workspacePath ?? "", refreshNoteTree)
 
+  function remapOpenNotePaths(oldPath: string, newPath: string) {
+    setSelectedSidebarPath((current) => current ? remapDescendantPath(current, oldPath, newPath) : current)
+    setTabs((current) => remapNoteTabs(current, oldPath, newPath))
+    const nextRoute = remapNoteRoute(currentRoutePath, oldPath, newPath)
+    if (nextRoute !== currentRoutePath) navigate(nextRoute, { replace: true })
+  }
+
+  function removeOpenNotePaths(removedPath: string) {
+    setSelectedSidebarPath((current) => {
+      if (!current) return current
+      return remapDescendantPath(current, removedPath, "") === current ? current : null
+    })
+    setTabs((current) => removeNoteTabs(current, removedPath))
+    const selectedPath = getNotePathFromRoute(currentRoutePath)
+    if (selectedPath && remapDescendantPath(selectedPath, removedPath, "") !== selectedPath) {
+      navigate("/notes", { replace: true })
+    }
+  }
+
   async function moveNodeToDirectory(node: NoteTreeNode, relativeDir: string) {
     if (!workspace) return
     try {
+      await flushBeforeSync()
       const newPath = await window.oneMind.notes.move(node.path, workspace.workspacePath, relativeDir)
       await refreshNoteTree()
-      if (selectedSidebarPath === node.path) {
-        setSelectedSidebarPath(newPath)
-        if (node.type === "file") {
-          navigate("/notes?selected=" + encodeURIComponent(newPath))
-        }
-      }
+      remapOpenNotePaths(node.path, newPath)
     } catch (err) {
       console.error("Move failed:", err)
     } finally {
@@ -591,11 +649,10 @@ export function AppShell() {
         setContextMenu(null)
         if (window.confirm('确定删除 "' + target.name + '" 吗？')) {
           try {
+            await flushBeforeSync()
             await window.oneMind.notes.delete(target.path)
             await refreshNoteTree()
-            if (selectedSidebarPath === target.path) {
-              setSelectedSidebarPath(null)
-            }
+            removeOpenNotePaths(target.path)
           } catch (e) {
             console.error('Delete failed:', e)
           }
@@ -1181,14 +1238,13 @@ export function AppShell() {
                     if (e.key === "Enter" && nameValue.trim() && workspace) {
                       e.preventDefault()
                       try {
+                        await flushBeforeSync()
                         const newPath = await window.oneMind.notes.rename(renameTarget.path, nameValue.trim())
                         setRenameTarget(null)
                         // Refresh tree
                         const nextTree = await window.oneMind.notes.list(workspace.workspacePath)
                         setNoteTree(nextTree)
-                        if (selectedSidebarPath === renameTarget.path) {
-                          setSelectedSidebarPath(newPath)
-                        }
+                        remapOpenNotePaths(renameTarget.path, newPath)
                       } catch (err) { console.error(err) }
                     }
                   }}
@@ -1200,13 +1256,12 @@ export function AppShell() {
               <button type="button" className="compact" onClick={async () => {
                 if (!nameValue.trim() || !workspace) return
                 try {
+                  await flushBeforeSync()
                   const newPath = await window.oneMind.notes.rename(renameTarget.path, nameValue.trim())
                   setRenameTarget(null)
                   const nextTree = await window.oneMind.notes.list(workspace.workspacePath)
                   setNoteTree(nextTree)
-                  if (selectedSidebarPath === renameTarget.path) {
-                    setSelectedSidebarPath(newPath)
-                  }
+                  remapOpenNotePaths(renameTarget.path, newPath)
                 } catch (err) { console.error(err) }
               }}>
                 确认
@@ -1241,18 +1296,10 @@ export function AppShell() {
               <button type="button" className="compact" onClick={async () => {
                 if (!workspace) return
                 try {
-                  const ws = workspace
                   const dirPath = nameInput
-                  const newPath = await window.oneMind.notes.move(moveTarget.path, ws.workspacePath, dirPath)
+                  await moveNodeToDirectory(moveTarget, dirPath)
                   setMoveTarget(null)
                   setNameInput("")
-                  await refreshNoteTree()
-                  if (selectedSidebarPath === moveTarget.path) {
-                    setSelectedSidebarPath(newPath)
-                    if (moveTarget.type === "file") {
-                      navigate("/notes?selected=" + encodeURIComponent(newPath))
-                    }
-                  }
                 } catch (err) { console.error(err) }
               }}>
                 移动

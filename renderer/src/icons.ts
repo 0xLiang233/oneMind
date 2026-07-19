@@ -22,6 +22,7 @@ export {
   Info,
   Maximize2,
   Minus,
+  MoveDiagonal2,
   MoveRight,
   NotebookText,
   PanelLeftClose,

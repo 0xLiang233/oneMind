@@ -1,0 +1,269 @@
+/*
+ * OneMind owns the presentation of Milkdown extension components. Crepe's
+ * common styles provide structural layout only; visual states map back to the
+ * application tokens here so future extensions have one explicit boundary.
+ */
+.onemind-markdown-editor .milkdown {
+  --crepe-color-background: var(--color-bg-base);
+  --crepe-color-on-background: var(--color-text-primary);
+  --crepe-color-surface: var(--color-bg-elevated);
+  --crepe-color-surface-low: var(--color-bg-surface);
+  --crepe-color-on-surface: var(--color-text-primary);
+  --crepe-color-on-surface-variant: var(--color-text-secondary);
+  --crepe-color-outline: var(--color-border-strong);
+  --crepe-color-primary: var(--color-accent-primary);
+  --crepe-color-secondary: var(--color-accent-primary-soft);
+  --crepe-color-on-secondary: var(--color-text-primary);
+  --crepe-color-inverse: var(--color-bg-overlay);
+  --crepe-color-on-inverse: var(--color-text-primary);
+  --crepe-color-inline-code: var(--color-text-primary);
+  --crepe-color-error: var(--color-danger);
+  --crepe-color-hover: var(--color-bg-hover);
+  --crepe-color-selected: var(--color-accent-primary-soft);
+  --crepe-color-inline-area: var(--color-bg-overlay);
+  --crepe-font-title: var(--font-ui);
+  --crepe-font-default: var(--font-ui);
+  --crepe-font-code: var(--font-mono);
+  --crepe-shadow-1: var(--shadow-sm);
+  --crepe-shadow-2: var(--shadow-md);
+}
+
+/* OneMind image node: content-first, responsive, and resizable on selection. */
+.onemind-markdown-editor .milkdown .onemind-image-node {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  margin: 22px 0;
+  outline: none;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-frame {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  overflow: clip;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  outline: 1px solid transparent;
+  outline-offset: 0;
+  transition: outline-color var(--transition-fast);
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-content {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: min(72vh, 760px);
+  min-height: 0;
+  border-radius: var(--radius-md);
+  object-fit: contain;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-node[data-sized="true"] .onemind-image-content {
+  width: 100%;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-node.selected .onemind-image-frame {
+  outline-color: color-mix(in srgb, var(--color-accent-primary) 72%, var(--color-border-strong));
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-resize-handle {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 86%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-bg-base) 90%, transparent);
+  box-shadow: 0 1px 4px var(--shadow-color-soft);
+  color: var(--color-text-secondary);
+  cursor: nwse-resize;
+  opacity: 0;
+  pointer-events: none;
+  touch-action: none;
+  backdrop-filter: blur(6px);
+  transition:
+    opacity var(--transition-fast),
+    border-color var(--transition-fast),
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-resize-handle svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+  pointer-events: none;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-node.selected .onemind-image-resize-handle {
+  opacity: 0.88;
+  pointer-events: auto;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-resize-handle:hover,
+.onemind-markdown-editor .milkdown .onemind-image-resize-handle:focus-visible {
+  border-color: var(--color-accent-primary);
+  background: color-mix(in srgb, var(--color-bg-base) 94%, var(--color-accent-primary-soft));
+  color: var(--color-accent-primary);
+  opacity: 1;
+  outline: 2px solid var(--color-accent-primary-soft);
+  outline-offset: 1px;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-node[data-resizing="true"] {
+  user-select: none;
+  will-change: width;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-node[data-resizing="true"] .onemind-image-resize-handle {
+  border-color: var(--color-accent-primary);
+  color: var(--color-accent-primary);
+  opacity: 1;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-node[data-resizing="true"]::after {
+  position: absolute;
+  right: 3px;
+  bottom: 28px;
+  z-index: 1;
+  min-width: 34px;
+  padding: 2px 5px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-bg-base) 92%, transparent);
+  box-shadow: 0 1px 3px var(--shadow-color-soft);
+  color: var(--color-text-secondary);
+  content: attr(data-width-label);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 15px;
+  text-align: center;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-rename {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px 28px;
+  gap: 6px;
+  width: min(360px, max(100%, 240px));
+  margin-top: 9px;
+  align-items: start;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-rename[hidden] {
+  display: none;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-rename-field {
+  display: flex;
+  min-width: 0;
+  height: 28px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-base);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-rename-field:focus-within {
+  border-color: var(--color-accent-primary);
+  box-shadow: 0 0 0 2px var(--color-accent-primary-soft);
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-rename-input {
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  padding: 0 0 0 8px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 26px;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-rename-extension {
+  flex: none;
+  padding: 0 8px 0 3px;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 26px;
+  user-select: none;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-rename-action {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-base);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-rename-action:hover,
+.onemind-markdown-editor .milkdown .onemind-image-rename-action:focus-visible {
+  border-color: var(--color-accent-primary);
+  background: var(--color-accent-primary-soft);
+  color: var(--color-accent-primary);
+  outline: none;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-rename-action svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-rename-error {
+  grid-column: 1 / -1;
+  padding-left: 2px;
+  color: var(--color-danger);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.onemind-markdown-editor .milkdown .onemind-image-node[data-rename-pending="true"] .onemind-image-rename {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+@media (max-width: 720px) {
+  .onemind-markdown-editor .milkdown .onemind-image-node {
+    margin: 18px 0;
+  }
+
+  .onemind-markdown-editor .milkdown .onemind-image-content {
+    max-height: 64vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onemind-markdown-editor .milkdown .onemind-image-frame,
+  .onemind-markdown-editor .milkdown .onemind-image-resize-handle {
+    transition: none;
+  }
+}

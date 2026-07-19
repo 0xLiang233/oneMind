@@ -7,9 +7,11 @@ mod sync;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 use std::{
+    collections::hash_map::DefaultHasher,
     env,
     fs::{self, OpenOptions},
-    io::{BufRead, BufReader, Write},
+    hash::{Hash, Hasher},
+    io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::Mutex,
@@ -87,6 +89,14 @@ struct NoteTreeNode {
     node_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<NoteTreeNode>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SavedNoteAsset {
+    markdown_path: String,
+    absolute_path: String,
+    mime_type: String,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -965,7 +975,11 @@ fn ensure_workspace_structure(workspace_path: PathBuf) -> Result<WorkspaceMeta, 
     })
 }
 
-fn read_note_tree(dir_path: &Path, root_path: &Path) -> Result<Vec<NoteTreeNode>, String> {
+fn read_note_tree(
+    dir_path: &Path,
+    root_path: &Path,
+    hide_attachment_dirs: bool,
+) -> Result<Vec<NoteTreeNode>, String> {
     let mut entries = fs::read_dir(dir_path)
         .map_err(|e| format!("failed to read notes directory: {e}"))?
         .filter_map(Result::ok)
@@ -983,6 +997,9 @@ fn read_note_tree(dir_path: &Path, root_path: &Path) -> Result<Vec<NoteTreeNode>
 
     entries
         .into_iter()
+        .filter(|entry| {
+            !(hide_attachment_dirs && entry.path().is_dir() && entry.file_name() == "assets")
+        })
         .map(|entry| {
             let full_path = entry.path();
             let relative_path = full_path
@@ -1002,7 +1019,7 @@ fn read_note_tree(dir_path: &Path, root_path: &Path) -> Result<Vec<NoteTreeNode>
                     name,
                     path: path_to_string(&full_path),
                     node_type: "directory".to_string(),
-                    children: Some(read_note_tree(&full_path, root_path)?),
+                    children: Some(read_note_tree(&full_path, root_path, hide_attachment_dirs)?),
                 })
             } else {
                 Ok(NoteTreeNode {
@@ -1028,6 +1045,9 @@ fn read_note_directories(
         let entry = entry.map_err(|e| e.to_string())?;
         let full_path = entry.path();
         if !full_path.is_dir() {
+            continue;
+        }
+        if entry.file_name() == "assets" {
             continue;
         }
 
@@ -1241,12 +1261,14 @@ fn build_activity_report(
             continue;
         };
         let score = activity_event_score(event);
-        let day = days.entry(date.clone()).or_insert_with(|| ActivityDaySummary {
-            date,
-            count: 0,
-            score: 0,
-            module_counts: std::collections::BTreeMap::new(),
-        });
+        let day = days
+            .entry(date.clone())
+            .or_insert_with(|| ActivityDaySummary {
+                date,
+                count: 0,
+                score: 0,
+                module_counts: std::collections::BTreeMap::new(),
+            });
         day.count += 1;
         day.score += score;
         *day.module_counts.entry(event.module.clone()).or_insert(0) += 1;
@@ -2376,13 +2398,13 @@ fn notes_list(workspace_path: String) -> Result<Vec<NoteTreeNode>, String> {
     fs::create_dir_all(&notes_path).map_err(|e| e.to_string())?;
     fs::create_dir_all(&assets_path).map_err(|e| e.to_string())?;
 
-    let mut nodes = read_note_tree(&notes_path, &notes_path)?;
+    let mut nodes = read_note_tree(&notes_path, &notes_path, true)?;
     nodes.push(NoteTreeNode {
         id: "__assets__".to_string(),
         name: "assets".to_string(),
         path: path_to_string(&assets_path),
         node_type: "directory".to_string(),
-        children: Some(read_note_tree(&assets_path, &assets_path)?),
+        children: Some(read_note_tree(&assets_path, &assets_path, false)?),
     });
     Ok(nodes)
 }
@@ -2494,24 +2516,467 @@ fn notes_rename(old_path: String, new_name: String) -> Result<String, String> {
     Ok(path_to_string(&new_path))
 }
 
+const MAX_NOTE_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+
+fn image_format(bytes: &[u8]) -> Option<(&'static str, &'static str)> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some(("png", "image/png"))
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        Some(("jpg", "image/jpeg"))
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some(("gif", "image/gif"))
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some(("webp", "image/webp"))
+    } else if bytes.len() >= 16
+        && &bytes[4..8] == b"ftyp"
+        && bytes[8..]
+            .chunks(4)
+            .take(5)
+            .any(|brand| brand == b"avif" || brand == b"avis")
+    {
+        Some(("avif", "image/avif"))
+    } else {
+        None
+    }
+}
+
+fn note_asset_bucket(note_path: &Path) -> String {
+    let stem = note_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("note");
+    let mut bucket = stem
+        .chars()
+        .take(64)
+        .map(|character| {
+            if character.is_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if bucket.trim_matches('_').is_empty() {
+        bucket = "note".to_string();
+    }
+    bucket
+}
+
+fn decode_note_image(data_base64: &str) -> Result<Vec<u8>, String> {
+    let encoded = data_base64
+        .split_once(',')
+        .filter(|(prefix, _)| prefix.starts_with("data:") && prefix.ends_with(";base64"))
+        .map(|(_, payload)| payload)
+        .unwrap_or(data_base64);
+    let max_encoded_len = MAX_NOTE_IMAGE_BYTES.div_ceil(3) * 4 + 4;
+    if encoded.len() > max_encoded_len {
+        return Err("Image exceeds the 20 MB size limit.".to_string());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| "Image data is not valid base64.".to_string())?;
+    if bytes.is_empty() || bytes.len() > MAX_NOTE_IMAGE_BYTES {
+        return Err("Image is empty or exceeds the 20 MB size limit.".to_string());
+    }
+    Ok(bytes)
+}
+
+fn canonical_notes_root(workspace_path: &str) -> Result<PathBuf, String> {
+    let notes = Path::new(workspace_path).join("notes");
+    fs::create_dir_all(&notes).map_err(|e| e.to_string())?;
+    fs::canonicalize(notes).map_err(|e| e.to_string())
+}
+
+fn validate_note_file(note_path: &Path, notes_root: &Path) -> Result<PathBuf, String> {
+    let resolved = fs::canonicalize(note_path).map_err(|e| e.to_string())?;
+    if !resolved.starts_with(notes_root)
+        || !resolved.is_file()
+        || resolved
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_none_or(|extension| !extension.eq_ignore_ascii_case("md"))
+    {
+        return Err("Note must be a Markdown file inside the notes workspace.".to_string());
+    }
+    Ok(resolved)
+}
+
+fn create_workspace_dir(path: &Path, notes_root: &Path) -> Result<PathBuf, String> {
+    let relative = path
+        .strip_prefix(notes_root)
+        .map_err(|_| "Directory is outside the notes workspace.".to_string())?;
+    let mut current = notes_root.to_path_buf();
+    for component in relative.components() {
+        match component {
+            std::path::Component::CurDir => continue,
+            std::path::Component::Normal(name) => current.push(name),
+            _ => return Err("Directory is outside the notes workspace.".to_string()),
+        }
+        if !current.exists() {
+            fs::create_dir(&current).map_err(|e| e.to_string())?;
+        }
+        current = fs::canonicalize(&current).map_err(|e| e.to_string())?;
+        if !current.starts_with(notes_root) || !current.is_dir() {
+            return Err("Directory is outside the notes workspace.".to_string());
+        }
+    }
+    Ok(current)
+}
+
+fn local_markdown_path(path: &str) -> Option<PathBuf> {
+    let path = path.trim();
+    if path.is_empty()
+        || path.contains('\\')
+        || path.starts_with('/')
+        || path.starts_with('#')
+        || path.contains("://")
+        || path.starts_with("data:")
+        || path.starts_with("file:")
+        || path.starts_with("blob:")
+        || path.contains('?')
+        || path.contains('#')
+    {
+        return None;
+    }
+    let candidate = PathBuf::from(path);
+    if candidate.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    }) {
+        return None;
+    }
+    Some(candidate)
+}
+
+fn markdown_image_paths(markdown: &str) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+    let mut rest = markdown;
+    while let Some(image_start) = rest.find("![") {
+        rest = &rest[image_start + 2..];
+        let Some(label_end) = rest.find("](") else {
+            continue;
+        };
+        rest = &rest[label_end + 2..];
+        let Some(destination_end) = rest.find(')') else {
+            break;
+        };
+        let raw = rest[..destination_end].trim();
+        rest = &rest[destination_end + 1..];
+        let destination = if raw.starts_with('<') && raw.ends_with('>') {
+            &raw[1..raw.len() - 1]
+        } else {
+            raw.split_whitespace().next().unwrap_or("")
+        };
+        if let Some(path) = local_markdown_path(destination) {
+            if !result.contains(&path) {
+                result.push(path);
+            }
+        }
+    }
+    result
+}
+
+fn remove_created_files(paths: &[PathBuf]) {
+    for path in paths.iter().rev() {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn copy_attachment(source: &Path, destination: &Path) -> Result<bool, String> {
+    if destination.exists() {
+        let source_bytes = fs::read(source).map_err(|e| e.to_string())?;
+        let destination_bytes = fs::read(destination).map_err(|e| e.to_string())?;
+        if source_bytes == destination_bytes {
+            return Ok(false);
+        }
+        return Err(format!(
+            "Attachment already exists with different content: {}",
+            path_to_string(destination)
+        ));
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "Attachment destination has no parent.".to_string())?;
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let mut input = fs::File::open(source).map_err(|e| e.to_string())?;
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .map_err(|e| e.to_string())?;
+    if let Err(error) = io::copy(&mut input, &mut output) {
+        drop(output);
+        let _ = fs::remove_file(destination);
+        return Err(error.to_string());
+    }
+    Ok(true)
+}
+
+fn markdown_files_under(dir: &Path, result: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            markdown_files_under(&path, result);
+        } else if path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+        {
+            result.push(path);
+        }
+    }
+}
+
+fn attachment_is_referenced(attachment: &Path, notes_root: &Path) -> bool {
+    let Ok(attachment) = fs::canonicalize(attachment) else {
+        return false;
+    };
+    let mut notes = Vec::new();
+    markdown_files_under(notes_root, &mut notes);
+    notes.into_iter().any(|note| {
+        let Ok(markdown) = fs::read_to_string(&note) else {
+            return false;
+        };
+        let Some(parent) = note.parent() else {
+            return false;
+        };
+        markdown_image_paths(&markdown).into_iter().any(|relative| {
+            fs::canonicalize(parent.join(relative)).is_ok_and(|candidate| candidate == attachment)
+        })
+    })
+}
+
+#[tauri::command]
+fn notes_save_pasted_image(
+    workspace_path: String,
+    note_path: String,
+    mime_type: String,
+    data_base64: String,
+) -> Result<SavedNoteAsset, String> {
+    let notes_root = canonical_notes_root(&workspace_path)?;
+    let note = validate_note_file(Path::new(&note_path), &notes_root)?;
+    let bytes = decode_note_image(&data_base64)?;
+    let (extension, detected_mime) =
+        image_format(&bytes).ok_or_else(|| "Unsupported or invalid image format.".to_string())?;
+    if !mime_type.is_empty() && mime_type != detected_mime {
+        return Err("Image MIME type does not match its file signature.".to_string());
+    }
+
+    let bucket = note_asset_bucket(&note);
+    let asset_dir = note
+        .parent()
+        .ok_or_else(|| "Note has no parent directory.".to_string())?
+        .join("assets")
+        .join(&bucket);
+    let resolved_asset_dir = create_workspace_dir(&asset_dir, &notes_root)?;
+
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    let hash = hasher.finish();
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let mut saved_path = None;
+    for suffix in 0..100u8 {
+        let suffix = if suffix == 0 {
+            String::new()
+        } else {
+            format!("-{suffix}")
+        };
+        let file_name = format!("img-{timestamp}-{hash:08x}{suffix}.{extension}");
+        let candidate = resolved_asset_dir.join(file_name);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(&bytes) {
+                    drop(file);
+                    let _ = fs::remove_file(&candidate);
+                    return Err(error.to_string());
+                }
+                saved_path = Some(candidate);
+                break;
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    let saved_path =
+        saved_path.ok_or_else(|| "Could not allocate an image filename.".to_string())?;
+    let file_name = saved_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "Saved image filename is invalid.".to_string())?;
+    Ok(SavedNoteAsset {
+        markdown_path: format!("./assets/{bucket}/{file_name}"),
+        absolute_path: path_to_string(&saved_path),
+        mime_type: detected_mime.to_string(),
+    })
+}
+
+#[tauri::command]
+fn notes_resolve_image(
+    workspace_path: String,
+    note_path: String,
+    markdown_path: String,
+) -> Result<String, String> {
+    let notes_root = canonical_notes_root(&workspace_path)?;
+    let note = validate_note_file(Path::new(&note_path), &notes_root)?;
+    let relative = local_markdown_path(&markdown_path)
+        .ok_or_else(|| "Image path must be a safe relative path.".to_string())?;
+    let image = note
+        .parent()
+        .ok_or_else(|| "Note has no parent directory.".to_string())?
+        .join(relative);
+    let resolved = fs::canonicalize(image).map_err(|e| e.to_string())?;
+    if !resolved.starts_with(&notes_root) || !resolved.is_file() {
+        return Err("Image is outside the notes workspace or is not a file.".to_string());
+    }
+    let bytes = fs::read(&resolved).map_err(|e| e.to_string())?;
+    if bytes.len() > MAX_NOTE_IMAGE_BYTES {
+        return Err("Image exceeds the 20 MB size limit.".to_string());
+    }
+    let (_, mime) =
+        image_format(&bytes).ok_or_else(|| "Unsupported or invalid image format.".to_string())?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(format!("data:{mime};base64,{encoded}"))
+}
+
+fn validate_image_base_name(value: &str) -> Result<&str, String> {
+    let name = value.trim();
+    if name.is_empty() {
+        return Err("图片名称不能为空。".to_string());
+    }
+    if name.chars().count() > 120 {
+        return Err("图片名称不能超过 120 个字符。".to_string());
+    }
+    if name == "."
+        || name == ".."
+        || name.ends_with('.')
+        || name.ends_with(' ')
+        || name.chars().any(|character| {
+            character.is_control()
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
+        })
+    {
+        return Err("图片名称包含无效字符。".to_string());
+    }
+
+    let device_name = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    let is_reserved = matches!(device_name.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || device_name.strip_prefix("COM").is_some_and(|suffix| {
+            matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+        })
+        || device_name.strip_prefix("LPT").is_some_and(|suffix| {
+            matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+        });
+    if is_reserved {
+        return Err("该图片名称是系统保留名称。".to_string());
+    }
+
+    Ok(name)
+}
+
+#[tauri::command]
+fn notes_rename_image(
+    workspace_path: String,
+    note_path: String,
+    markdown_path: String,
+    new_name: String,
+) -> Result<String, String> {
+    let notes_root = canonical_notes_root(&workspace_path)?;
+    let note = validate_note_file(Path::new(&note_path), &notes_root)?;
+    let relative = local_markdown_path(&markdown_path)
+        .ok_or_else(|| "图片路径必须是安全的相对路径。".to_string())?;
+    let components = relative
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => Some(value),
+            std::path::Component::CurDir => None,
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if components.len() != 3 || components[0] != "assets" {
+        return Err("只能重命名当前笔记 assets 目录中的图片。".to_string());
+    }
+
+    let note_parent = note
+        .parent()
+        .ok_or_else(|| "笔记没有父目录。".to_string())?;
+    let assets_root = fs::canonicalize(note_parent.join("assets"))
+        .map_err(|_| "图片 assets 目录不存在。".to_string())?;
+    if !assets_root.starts_with(&notes_root) || !assets_root.is_dir() {
+        return Err("图片 assets 目录不在笔记工作区内。".to_string());
+    }
+
+    let source = fs::canonicalize(note_parent.join(&relative))
+        .map_err(|_| "找不到需要重命名的图片。".to_string())?;
+    if !source.starts_with(&assets_root)
+        || !source.is_file()
+        || source.parent().and_then(Path::parent) != Some(assets_root.as_path())
+    {
+        return Err("只能重命名当前笔记直接管理的图片。".to_string());
+    }
+    let bytes = fs::read(&source).map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_NOTE_IMAGE_BYTES || image_format(&bytes).is_none() {
+        return Err("目标文件不是受支持的图片。".to_string());
+    }
+
+    let base_name = validate_image_base_name(&new_name)?;
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "图片扩展名无效。".to_string())?;
+    let target_file_name = format!("{base_name}.{extension}");
+    if source.file_name().and_then(|value| value.to_str()) == Some(target_file_name.as_str()) {
+        return Ok(markdown_path);
+    }
+
+    let target = source
+        .parent()
+        .ok_or_else(|| "图片没有父目录。".to_string())?
+        .join(&target_file_name);
+    if target.exists() {
+        return Err("同名图片已经存在。".to_string());
+    }
+    fs::rename(&source, &target).map_err(|error| error.to_string())?;
+
+    let bucket = source
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "图片目录名称无效。".to_string())?;
+    Ok(format!("./assets/{bucket}/{target_file_name}"))
+}
+
 #[tauri::command]
 fn notes_move(
     old_path: String,
     workspace_path: String,
     relative_dir: String,
 ) -> Result<String, String> {
-    let notes_path = Path::new(&workspace_path).join("notes");
-    let target_dir = notes_path.join(relative_dir);
-    let resolved_notes = fs::canonicalize(&notes_path).map_err(|e| e.to_string())?;
-    fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
-    let resolved_target_dir = fs::canonicalize(&target_dir).map_err(|e| e.to_string())?;
+    let resolved_notes = canonical_notes_root(&workspace_path)?;
+    let relative_target = local_markdown_path(&relative_dir)
+        .or_else(|| relative_dir.trim().is_empty().then(PathBuf::new))
+        .ok_or_else(|| "Target directory must be inside the notes workspace.".to_string())?;
+    let target_dir = resolved_notes.join(relative_target);
+    let resolved_target_dir = create_workspace_dir(&target_dir, &resolved_notes)?;
 
-    if !resolved_target_dir.starts_with(&resolved_notes) {
-        return Err("Target directory is outside notes workspace.".to_string());
+    let old_path_buf = fs::canonicalize(&old_path).map_err(|e| e.to_string())?;
+    if !old_path_buf.starts_with(&resolved_notes) || old_path_buf == resolved_notes {
+        return Err("Source is outside the notes workspace.".to_string());
     }
-
-    let old_path_buf = PathBuf::from(&old_path);
-    let target_path = target_dir.join(
+    let target_path = resolved_target_dir.join(
         old_path_buf
             .file_name()
             .ok_or_else(|| "target has no file name".to_string())?,
@@ -2521,8 +2986,246 @@ fn notes_move(
         return Ok(old_path);
     }
 
-    fs::rename(&old_path_buf, &target_path).map_err(|e| e.to_string())?;
+    if target_path.exists() {
+        return Err(
+            "A file or directory with the same name already exists at the destination.".to_string(),
+        );
+    }
+
+    if old_path_buf.is_dir()
+        || old_path_buf
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_none_or(|extension| !extension.eq_ignore_ascii_case("md"))
+    {
+        fs::rename(&old_path_buf, &target_path).map_err(|e| e.to_string())?;
+        return Ok(path_to_string(&target_path));
+    }
+
+    let markdown = fs::read_to_string(&old_path_buf).map_err(|e| e.to_string())?;
+    let old_parent = old_path_buf
+        .parent()
+        .ok_or_else(|| "Source note has no parent directory.".to_string())?;
+    let mut attachments = Vec::new();
+    for relative in markdown_image_paths(&markdown) {
+        let source = old_parent.join(&relative);
+        let Ok(resolved_source) = fs::canonicalize(&source) else {
+            continue;
+        };
+        if !resolved_source.starts_with(&resolved_notes) || !resolved_source.is_file() {
+            continue;
+        }
+        let Ok(source_bytes) = fs::read(&resolved_source) else {
+            continue;
+        };
+        if source_bytes.len() > MAX_NOTE_IMAGE_BYTES || image_format(&source_bytes).is_none() {
+            continue;
+        }
+        let destination = resolved_target_dir.join(&relative);
+        attachments.push((resolved_source, destination));
+    }
+
+    let mut created = Vec::new();
+    for (source, destination) in &attachments {
+        let destination_parent = destination
+            .parent()
+            .ok_or_else(|| "Attachment destination has no parent.".to_string())?;
+        let resolved_destination_parent =
+            match create_workspace_dir(destination_parent, &resolved_notes) {
+                Ok(parent) => parent,
+                Err(error) => {
+                    remove_created_files(&created);
+                    return Err(error);
+                }
+            };
+        let safe_destination = resolved_destination_parent.join(
+            destination
+                .file_name()
+                .ok_or_else(|| "Attachment destination has no filename.".to_string())?,
+        );
+        match copy_attachment(source, &safe_destination) {
+            Ok(true) => created.push(safe_destination),
+            Ok(false) => {}
+            Err(error) => {
+                remove_created_files(&created);
+                return Err(error);
+            }
+        }
+    }
+
+    if let Err(error) = fs::rename(&old_path_buf, &target_path) {
+        remove_created_files(&created);
+        return Err(error.to_string());
+    }
+
+    for (source, destination) in attachments {
+        if source != destination && !attachment_is_referenced(&source, &resolved_notes) {
+            let _ = fs::remove_file(source);
+        }
+    }
     Ok(path_to_string(&target_path))
+}
+
+#[cfg(test)]
+mod note_asset_tests {
+    use super::*;
+
+    fn test_workspace(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let workspace = env::temp_dir().join(format!("onemind-{label}-{unique}"));
+        fs::create_dir_all(workspace.join("notes")).expect("create notes");
+        workspace
+    }
+
+    fn write_png(path: &Path, marker: u8) {
+        fs::create_dir_all(path.parent().expect("image parent")).expect("create image parent");
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.push(marker);
+        fs::write(path, bytes).expect("write image");
+    }
+
+    #[test]
+    fn saves_to_note_scoped_assets_and_rejects_traversal() {
+        let workspace = test_workspace("save");
+        let note = workspace.join("notes").join("My note.md");
+        fs::write(&note, "# Note\n").expect("write note");
+        let saved = notes_save_pasted_image(
+            path_to_string(&workspace),
+            path_to_string(&note),
+            "image/png".to_string(),
+            base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\n"),
+        )
+        .expect("save image");
+
+        assert!(saved.markdown_path.starts_with("./assets/My_note/img-"));
+        assert!(Path::new(&saved.absolute_path).is_file());
+        assert!(notes_resolve_image(
+            path_to_string(&workspace),
+            path_to_string(&note),
+            "../outside.png".to_string(),
+        )
+        .is_err());
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn renames_managed_image_and_preserves_extension() {
+        let workspace = test_workspace("rename-image");
+        let note = workspace.join("notes").join("My note.md");
+        fs::write(&note, "# Note\n").expect("write note");
+        let source = workspace
+            .join("notes")
+            .join("assets")
+            .join("My_note")
+            .join("original.png");
+        write_png(&source, 1);
+
+        let renamed = notes_rename_image(
+            path_to_string(&workspace),
+            path_to_string(&note),
+            "./assets/My_note/original.png".to_string(),
+            "项目截图".to_string(),
+        )
+        .expect("rename image");
+
+        assert_eq!(renamed, "./assets/My_note/项目截图.png");
+        assert!(!source.exists());
+        assert!(workspace
+            .join("notes/assets/My_note/项目截图.png")
+            .is_file());
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn image_rename_rejects_unmanaged_paths_and_conflicts() {
+        let workspace = test_workspace("rename-image-invalid");
+        let notes = workspace.join("notes");
+        let note = notes.join("note.md");
+        fs::write(&note, "# Note\n").expect("write note");
+        write_png(&notes.join("outside.png"), 1);
+        write_png(&notes.join("assets/note/source.png"), 1);
+        write_png(&notes.join("assets/note/taken.png"), 2);
+
+        assert!(notes_rename_image(
+            path_to_string(&workspace),
+            path_to_string(&note),
+            "./outside.png".to_string(),
+            "renamed".to_string(),
+        )
+        .is_err());
+        assert!(notes_rename_image(
+            path_to_string(&workspace),
+            path_to_string(&note),
+            "./assets/note/source.png".to_string(),
+            "taken".to_string(),
+        )
+        .is_err());
+        assert!(notes_rename_image(
+            path_to_string(&workspace),
+            path_to_string(&note),
+            "./assets/note/source.png".to_string(),
+            "bad/name".to_string(),
+        )
+        .is_err());
+        assert!(notes.join("assets/note/source.png").is_file());
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn moving_note_moves_managed_attachment_even_after_rename() {
+        let workspace = test_workspace("move");
+        let notes = workspace.join("notes");
+        let old_note = notes.join("renamed.md");
+        let source_image = notes.join("assets/original/image.png");
+        write_png(&source_image, 1);
+        fs::write(&old_note, "![image](./assets/original/image.png)\n").expect("write note");
+        fs::create_dir_all(notes.join("archive")).expect("create target");
+
+        let moved = notes_move(
+            path_to_string(&old_note),
+            path_to_string(&workspace),
+            "archive".to_string(),
+        )
+        .expect("move note");
+
+        assert_eq!(
+            fs::canonicalize(moved).expect("canonical moved note"),
+            fs::canonicalize(notes.join("archive/renamed.md")).expect("canonical expected note"),
+        );
+        assert!(notes.join("archive/assets/original/image.png").is_file());
+        assert!(!source_image.exists());
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn attachment_conflict_keeps_source_note_and_image() {
+        let workspace = test_workspace("conflict");
+        let notes = workspace.join("notes");
+        let note = notes.join("note.md");
+        let source_image = notes.join("assets/note/image.png");
+        let conflicting_image = notes.join("target/assets/note/image.png");
+        write_png(&source_image, 1);
+        write_png(&conflicting_image, 2);
+        fs::write(&note, "![image](./assets/note/image.png)\n").expect("write note");
+
+        let result = notes_move(
+            path_to_string(&note),
+            path_to_string(&workspace),
+            "target".to_string(),
+        );
+
+        assert!(result.is_err());
+        assert!(note.is_file());
+        assert!(source_image.is_file());
+        assert_eq!(
+            fs::read(conflicting_image).expect("read conflict").last(),
+            Some(&2)
+        );
+        let _ = fs::remove_dir_all(workspace);
+    }
 }
 
 #[tauri::command]
@@ -2719,7 +3422,10 @@ fn preferences_write(
 }
 
 #[tauri::command]
-fn activity_append(workspace_path: String, events: Vec<ActivityEventInput>) -> Result<usize, String> {
+fn activity_append(
+    workspace_path: String,
+    events: Vec<ActivityEventInput>,
+) -> Result<usize, String> {
     let normalized = events
         .into_iter()
         .enumerate()
@@ -2822,10 +3528,18 @@ fn window_toggle_maximize(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_window("main") {
         if window.is_maximized().map_err(|e| e.to_string())? {
             window.unmaximize().map_err(|e| e.to_string())?;
-            append_debug_log(&app, "window_toggle_maximize_done", Some("action=unmaximize found=true"));
+            append_debug_log(
+                &app,
+                "window_toggle_maximize_done",
+                Some("action=unmaximize found=true"),
+            );
         } else {
             window.maximize().map_err(|e| e.to_string())?;
-            append_debug_log(&app, "window_toggle_maximize_done", Some("action=maximize found=true"));
+            append_debug_log(
+                &app,
+                "window_toggle_maximize_done",
+                Some("action=maximize found=true"),
+            );
         }
     } else {
         append_debug_log(&app, "window_toggle_maximize_skipped", Some("found=false"));
@@ -3375,6 +4089,9 @@ pub fn run() {
             notes_create_from_quick_note,
             notes_create_folder,
             notes_rename,
+            notes_save_pasted_image,
+            notes_resolve_image,
+            notes_rename_image,
             notes_move,
             notes_delete,
             notes_open_file,

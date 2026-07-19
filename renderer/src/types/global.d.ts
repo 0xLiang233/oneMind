@@ -187,6 +187,12 @@ type ActivityReport = {
   totals: ActivityTotals
 }
 
+type SavedNoteAsset = {
+  markdownPath: string
+  absolutePath: string
+  mimeType: string
+}
+
 interface Window {
   oneMind: {
     runtime?: {
@@ -234,6 +240,20 @@ interface Window {
       delete: (targetPath: string) => Promise<boolean>
       openFile: (targetPath: string, workspacePath?: string) => Promise<boolean>
       openContainingFolder: (targetPath: string, workspacePath?: string) => Promise<boolean>
+      assets: {
+        savePastedImage: (
+          workspacePath: string,
+          notePath: string,
+          image: { mimeType: string; dataBase64: string }
+        ) => Promise<SavedNoteAsset>
+        resolveImage: (workspacePath: string, notePath: string, markdownPath: string) => Promise<string>
+        renameImage: (
+          workspacePath: string,
+          notePath: string,
+          markdownPath: string,
+          newName: string
+        ) => Promise<string>
+      }
     }
     files: {
       readDataUrl: (targetPath: string, workspacePath?: string) => Promise<string>

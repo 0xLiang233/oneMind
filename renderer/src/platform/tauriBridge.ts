@@ -82,7 +82,20 @@ export function createTauriBridge(): Window["oneMind"] {
       openFile: (targetPath, workspacePath) =>
         invoke<boolean>("notes_open_file", { targetPath, workspacePath }),
       openContainingFolder: (targetPath, workspacePath) =>
-        invoke<boolean>("notes_open_containing_folder", { targetPath, workspacePath })
+        invoke<boolean>("notes_open_containing_folder", { targetPath, workspacePath }),
+      assets: {
+        savePastedImage: (workspacePath, notePath, image) =>
+          invoke<SavedNoteAsset>("notes_save_pasted_image", {
+            workspacePath,
+            notePath,
+            mimeType: image.mimeType,
+            dataBase64: image.dataBase64
+          }),
+        resolveImage: (workspacePath, notePath, markdownPath) =>
+          invoke<string>("notes_resolve_image", { workspacePath, notePath, markdownPath }),
+        renameImage: (workspacePath, notePath, markdownPath, newName) =>
+          invoke<string>("notes_rename_image", { workspacePath, notePath, markdownPath, newName })
+      }
     },
     files: {
       readDataUrl: (targetPath, workspacePath) =>

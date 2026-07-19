@@ -20,6 +20,7 @@ export function NotesPage() {
   const [status, setStatus] = useState("从侧边栏选择笔记开始编辑")
   const [editorMode, setEditorMode] = useState<"rich" | "source">("rich")
   const savePromiseRef = useRef<Promise<void> | null>(null)
+  const sourceEditorRef = useRef<HTMLTextAreaElement | null>(null)
 
   const selectedName = useMemo(() => {
     if (!selectedSidebarPath) return "未选择笔记"
@@ -140,6 +141,34 @@ export function NotesPage() {
     setEditorMode((current) => current === "source" ? "rich" : "source")
   }
 
+  async function handleSourcePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    if (!workspace || !selectedSidebarPath) return
+    const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"))
+    if (images.length === 0) return
+
+    event.preventDefault()
+    const selectionStart = event.currentTarget.selectionStart
+    const selectionEnd = event.currentTarget.selectionEnd
+    try {
+      const saved = await Promise.all(images.map(async (file) => {
+        const dataBase64 = await readFileAsBase64(file)
+        return window.oneMind.notes.assets.savePastedImage(workspace.workspacePath, selectedSidebarPath, {
+          mimeType: file.type,
+          dataBase64
+        })
+      }))
+      const markdown = saved.map((asset) => `![image](${asset.markdownPath})`).join("\n\n")
+      setContent((current) => `${current.slice(0, selectionStart)}${markdown}${current.slice(selectionEnd)}`)
+      window.requestAnimationFrame(() => {
+        const caret = selectionStart + markdown.length
+        sourceEditorRef.current?.focus()
+        sourceEditorRef.current?.setSelectionRange(caret, caret)
+      })
+    } catch (error) {
+      setStatus(`图片保存失败: ${String(error)}`)
+    }
+  }
+
   return (
     <section className="page notes-workspace-page">
       <div className="md-workspace">
@@ -180,9 +209,11 @@ export function NotesPage() {
           {selectedSidebarPath && loadedPath === selectedSidebarPath ? (
             editorMode === "source" ? (
               <textarea
+                ref={sourceEditorRef}
                 className="notes-source-editor"
                 value={content}
                 onChange={(event) => setContent(event.target.value)}
+                onPaste={(event) => void handleSourcePaste(event)}
                 spellCheck={false}
               />
             ) : (
@@ -190,6 +221,9 @@ export function NotesPage() {
                 key={selectedSidebarPath}
                 value={content}
                 onChange={setContent}
+                workspacePath={workspace?.workspacePath ?? ""}
+                notePath={selectedSidebarPath}
+                onError={setStatus}
               />
             )
           ) : selectedSidebarPath ? (
@@ -201,4 +235,20 @@ export function NotesPage() {
       </div>
     </section>
   )
+}
+
+function readFileAsBase64(file: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error ?? new Error("无法读取图片"))
+    reader.onload = () => {
+      const result = reader.result
+      if (typeof result !== "string") {
+        reject(new Error("无法读取图片"))
+        return
+      }
+      resolve(result.slice(result.indexOf(",") + 1))
+    }
+    reader.readAsDataURL(file)
+  })
 }
