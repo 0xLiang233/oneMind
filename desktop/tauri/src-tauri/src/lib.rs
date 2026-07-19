@@ -2394,19 +2394,8 @@ fn workspace_select(window: WebviewWindow) -> Result<Option<WorkspaceMeta>, Stri
 #[tauri::command]
 fn notes_list(workspace_path: String) -> Result<Vec<NoteTreeNode>, String> {
     let notes_path = Path::new(&workspace_path).join("notes");
-    let assets_path = Path::new(&workspace_path).join("assets");
     fs::create_dir_all(&notes_path).map_err(|e| e.to_string())?;
-    fs::create_dir_all(&assets_path).map_err(|e| e.to_string())?;
-
-    let mut nodes = read_note_tree(&notes_path, &notes_path, true)?;
-    nodes.push(NoteTreeNode {
-        id: "__assets__".to_string(),
-        name: "assets".to_string(),
-        path: path_to_string(&assets_path),
-        node_type: "directory".to_string(),
-        children: Some(read_note_tree(&assets_path, &assets_path, false)?),
-    });
-    Ok(nodes)
+    read_note_tree(&notes_path, &notes_path, true)
 }
 
 #[tauri::command]
@@ -3226,11 +3215,38 @@ mod note_asset_tests {
         );
         let _ = fs::remove_dir_all(workspace);
     }
+
+    #[test]
+    fn note_tree_excludes_workspace_and_note_asset_directories() {
+        let workspace = test_workspace("tree-assets");
+        fs::create_dir_all(workspace.join("assets")).expect("create workspace assets");
+        fs::write(workspace.join("assets/legacy.png"), b"legacy").expect("write legacy asset");
+        fs::create_dir_all(workspace.join("notes/assets/note")).expect("create note assets");
+        fs::write(workspace.join("notes/assets/note/image.png"), b"image").expect("write note asset");
+        fs::write(workspace.join("notes/note.md"), "# Note\n").expect("write note");
+
+        let nodes = notes_list(path_to_string(&workspace)).expect("list notes");
+
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "note.md");
+        let _ = fs::remove_dir_all(workspace);
+    }
 }
 
 #[tauri::command]
 fn notes_delete(target_path: String) -> Result<bool, String> {
     let path = PathBuf::from(target_path);
+    let is_managed_root = path.parent().is_some_and(|parent| {
+        let name = path
+            .file_name()
+            .map(|value| value.to_string_lossy())
+            .unwrap_or_default();
+        (name.eq_ignore_ascii_case("assets") && parent.join("notes").is_dir())
+            || (name.eq_ignore_ascii_case("notes") && parent.join("assets").is_dir())
+    });
+    if is_managed_root {
+        return Err("cannot delete a managed workspace directory".to_string());
+    }
     if path.is_dir() {
         fs::remove_dir_all(path).map_err(|e| e.to_string())?;
     } else {

@@ -281,6 +281,16 @@ function removeNoteTabs(tabs: Tab[], removedPath: string) {
   })
 }
 
+function removeNoteTreeNode(nodes: NoteTreeNode[], removedPath: string): NoteTreeNode[] {
+  return nodes.reduce<NoteTreeNode[]>((result, node) => {
+    if (node.path === removedPath) return result
+    result.push(node.children
+      ? { ...node, children: removeNoteTreeNode(node.children, removedPath) }
+      : node)
+    return result
+  }, [])
+}
+
 export function AppShell() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -297,10 +307,14 @@ export function AppShell() {
   const [notesSearchExpanded, setNotesSearchExpanded] = useState(false)
   const [notesSearchQuery, setNotesSearchQuery] = useState("")
   const notesSearchRef = useRef<HTMLInputElement | null>(null)
+  const noteTreeRequestRef = useRef(0)
   const [noteTree, setNoteTree] = useState<NoteTreeNode[]>([])
   const [selectedSidebarPath, setSelectedSidebarPath] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; targetNode: NoteTreeNode | null } | null>(null)
   const [renameTarget, setRenameTarget] = useState<NoteTreeNode | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<NoteTreeNode | null>(null)
+  const [deletePending, setDeletePending] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
   const [nameValue, setNameValue] = useState('')
   const [createDialog, setCreateDialog] = useState<{ type: 'file' | 'folder'; dirPath: string } | null>(null)
   const [nameInput, setNameInput] = useState('')
@@ -385,9 +399,10 @@ export function AppShell() {
   // Load sidebar data
   useEffect(() => {
     async function load() {
+      const requestId = ++noteTreeRequestRef.current
       if (!workspace) { setNoteTree([]); return }
       const nextTree = await window.oneMind.notes.list(workspace.workspacePath)
-      setNoteTree(nextTree)
+      if (requestId === noteTreeRequestRef.current) setNoteTree(nextTree)
     }
     void load()
   }, [workspace])
@@ -526,10 +541,15 @@ export function AppShell() {
       || target.path.startsWith(workspace.assetsPath + "/")
   }
 
+  function isAssetsRoot(target: NoteTreeNode | null) {
+    return Boolean(workspace && target?.path === workspace.assetsPath)
+  }
+
   const refreshNoteTree = useCallback(async () => {
     if (!workspace) return
+    const requestId = ++noteTreeRequestRef.current
     const nextTree = await window.oneMind.notes.list(workspace.workspacePath)
-    setNoteTree(nextTree)
+    if (requestId === noteTreeRequestRef.current) setNoteTree(nextTree)
   }, [workspace])
 
   const workspaceSync = useWorkspaceSync(workspace?.workspacePath ?? "", refreshNoteTree)
@@ -617,6 +637,27 @@ export function AppShell() {
     setContextMenu({ x: e.clientX, y: e.clientY, targetNode: null })
   }
 
+  async function confirmDelete() {
+    if (!deleteTarget || deletePending) return
+
+    setDeletePending(true)
+    setDeleteError("")
+    try {
+      const removedPath = deleteTarget.path
+      await flushBeforeSync()
+      await window.oneMind.notes.delete(removedPath)
+      setNoteTree((current) => removeNoteTreeNode(current, removedPath))
+      removeOpenNotePaths(removedPath)
+      setDeleteTarget(null)
+      await refreshNoteTree()
+    } catch (error) {
+      console.error("Delete failed:", error)
+      setDeleteError("删除失败，请重试。")
+    } finally {
+      setDeletePending(false)
+    }
+  }
+
   async function handleContextMenuAction(action: string) {
     const target = contextMenu?.targetNode
     const ws = workspace
@@ -638,25 +679,17 @@ export function AppShell() {
         break
       }
       case 'rename': {
-        if (!target) return
+        if (!target || isAssetsRoot(target)) return
         setContextMenu(null)
         setRenameTarget(target)
         setNameValue(target.name)
         break
       }
       case 'delete': {
-        if (!target) return
+        if (!target || isAssetsRoot(target)) return
         setContextMenu(null)
-        if (window.confirm('确定删除 "' + target.name + '" 吗？')) {
-          try {
-            await flushBeforeSync()
-            await window.oneMind.notes.delete(target.path)
-            await refreshNoteTree()
-            removeOpenNotePaths(target.path)
-          } catch (e) {
-            console.error('Delete failed:', e)
-          }
-        }
+        setDeleteError("")
+        setDeleteTarget(target)
         break
       }
       case 'move': {
@@ -685,6 +718,7 @@ export function AppShell() {
     // Tree context menu (prototype Phase 3)
     const target = contextMenu?.targetNode ?? null
     const targetIsAssets = isAssetsNode(target)
+    const targetIsAssetsRoot = isAssetsRoot(target)
     const createItems: ContextMenuItem[] = [
         {
           label: '新建文件夹',
@@ -713,7 +747,7 @@ export function AppShell() {
       [
         openFolderItem
       ],
-      [
+      ...(targetIsAssetsRoot ? [] : [[
         {
           label: '重命名',
           action: 'rename',
@@ -726,7 +760,7 @@ export function AppShell() {
           danger: true,
           icon: <Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />
         }
-      ],
+      ]]),
       [
         ...(targetIsAssets ? [] : [{
           label: '移动到…',
@@ -1123,6 +1157,55 @@ export function AppShell() {
           onClose={() => setContextMenu(null)}
           onAction={handleContextMenuAction}
         />
+      )}
+
+      {deleteTarget && (
+        <div
+          className="convert-overlay"
+          role="presentation"
+          onClick={() => { if (!deletePending) setDeleteTarget(null) }}
+        >
+          <section
+            className="convert-panel delete-confirm-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-confirm-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="delete-confirm-body">
+              <div className="delete-confirm-icon" aria-hidden="true">
+                <Trash2 size={18} strokeWidth={1.8} />
+              </div>
+              <div className="delete-confirm-copy">
+                <h2 id="delete-confirm-title">删除{deleteTarget.type === "directory" ? "文件夹" : "笔记"}</h2>
+                <p>
+                  确定删除 <strong>{deleteTarget.name}</strong> 吗？
+                  {deleteTarget.type === "directory" && " 文件夹中的内容也会一并删除。"}
+                </p>
+                {deleteError && <div className="delete-confirm-error" role="alert">{deleteError}</div>}
+              </div>
+            </div>
+            <div className="delete-confirm-actions">
+              <button
+                type="button"
+                className="secondary compact"
+                autoFocus
+                disabled={deletePending}
+                onClick={() => setDeleteTarget(null)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="compact delete-confirm-button"
+                disabled={deletePending}
+                onClick={() => void confirmDelete()}
+              >
+                {deletePending ? "删除中..." : "删除"}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
 
       {/* Create dialog */}

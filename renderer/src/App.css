@@ -3493,6 +3493,62 @@ button.danger:hover {
   white-space: pre-wrap;
 }
 
+.delete-confirm-panel {
+  width: min(400px, calc(100vw - 32px));
+  grid-template-rows: auto auto;
+  overflow: hidden;
+}
+.delete-confirm-body {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-5) var(--space-4);
+}
+.delete-confirm-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  display: grid;
+  place-items: center;
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+}
+.delete-confirm-copy { min-width: 0; }
+.delete-confirm-copy h2 {
+  margin: 1px 0 6px;
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+.delete-confirm-copy p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.delete-confirm-copy strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+.delete-confirm-error {
+  margin-top: var(--space-2);
+  color: var(--color-danger);
+  font-size: 12px;
+}
+.delete-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: 0 var(--space-5) var(--space-5);
+}
+button.delete-confirm-button {
+  background: var(--color-danger);
+  color: #ffffff;
+}
+button.delete-confirm-button:hover { background: color-mix(in srgb, var(--color-danger) 86%, black); }
+
 /* ===== Button ===== */
 button {
   font-family: var(--font-ui);
