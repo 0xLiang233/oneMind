@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -9,6 +11,8 @@ use tauri::{AppHandle, Emitter, State};
 
 const DEFAULT_BRANCH: &str = "main";
 const SYNC_EVENT: &str = "sync-status-changed";
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Default)]
 pub struct SyncState {
@@ -154,8 +158,15 @@ fn validate_config(config: &SyncConfig) -> Result<(), String> {
     Ok(())
 }
 
+fn git_command() -> Command {
+    let mut command = Command::new("git");
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
 fn git_output(root: &Path, args: &[&str]) -> Result<Output, String> {
-    Command::new("git")
+    git_command()
         .args(args)
         .current_dir(root)
         .output()
@@ -174,7 +185,7 @@ fn git(root: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn git_available() -> bool {
-    Command::new("git")
+    git_command()
         .arg("--version")
         .output()
         .map(|output| output.status.success())
@@ -182,7 +193,7 @@ fn git_available() -> bool {
 }
 
 fn git_version() -> String {
-    Command::new("git")
+    git_command()
         .arg("--version")
         .output()
         .ok()
@@ -503,7 +514,7 @@ pub fn sync_authenticate_github(
     username: Option<String>,
 ) -> Result<AuthenticationResult, String> {
     let root = workspace_root(&workspace_path)?;
-    let manager = Command::new("git")
+    let manager = git_command()
         .args(["credential-manager", "--version"])
         .current_dir(&root)
         .output()
@@ -512,7 +523,7 @@ pub fn sync_authenticate_github(
         return Err("未检测到 Git Credential Manager，请安装最新版 Git for Windows。".to_string());
     }
 
-    let mut command = Command::new("git");
+    let mut command = git_command();
     command
         .args(["credential-manager", "github", "login", "--browser", "--force"])
         .current_dir(&root);
