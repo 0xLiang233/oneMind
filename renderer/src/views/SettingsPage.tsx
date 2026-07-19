@@ -3,7 +3,7 @@ import { useLocation, useOutletContext } from "react-router-dom"
 import { ActivitySettingsPanel } from "./ActivitySettingsPanel"
 import { SyncSettingsPanel } from "./SyncSettingsPanel"
 import type { LucideIcon } from "../icons"
-import { Activity, FileText, GitBranch, Grid3X3, Info, Settings, Sun } from "../icons"
+import { Activity, FileText, GitBranch, Grid3X3, Info, RefreshCw, Settings, Sun } from "../icons"
 
 type OutletContext = {
   workspace: WorkspaceMeta | null
@@ -27,6 +27,7 @@ type OutletContext = {
 }
 
 type SettingsGroup = "appearance" | "general" | "sync" | "miniapps" | "activity" | "editor" | "about"
+type UpdatePhase = "idle" | "checking" | "available" | "downloading" | "installing" | "error"
 
 const defaultPreferences: AppPreferences = {
   theme: "system",
@@ -148,6 +149,11 @@ export function SettingsPage() {
   const [recordingShortcut, setRecordingShortcut] = useState(false)
   const [recordingShortcutPreview, setRecordingShortcutPreview] = useState("")
   const [status, setStatus] = useState("")
+  const [appVersion, setAppVersion] = useState("")
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null)
+  const [updatePhase, setUpdatePhase] = useState<UpdatePhase>("idle")
+  const [updateMessage, setUpdateMessage] = useState("检查是否有新的稳定版本。")
+  const [updateProgress, setUpdateProgress] = useState({ downloaded: 0, total: 0 })
   const statusTimerRef = useRef<number | null>(null)
   const savedShortcutRef = useRef(defaultPreferences.floatNoteShortcut)
   const shortcutButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -199,6 +205,24 @@ export function SettingsPage() {
     return () => clearStatusTimer()
   }, [])
 
+  useEffect(() => {
+    if (!bridgeReady) return
+
+    void window.oneMind.diagnostics.getShellReport()
+      .then((report) => {
+        setAppVersion(report.appVersion)
+        setUpdateMessage(window.oneMind.updates.supported
+          ? "检查是否有新的稳定版本。"
+          : "当前桌面外壳不支持自动更新。")
+      })
+      .catch(() => {
+        setAppVersion("未知")
+        if (!window.oneMind.updates.supported) {
+          setUpdateMessage("当前桌面外壳不支持自动更新。")
+        }
+      })
+  }, [bridgeReady])
+
   if (requestedGroup !== lastRequestedGroup) {
     setLastRequestedGroup(requestedGroup)
     if (requestedGroup && navGroups.flatMap((group) => group.items).some((item) => item.key === requestedGroup)) {
@@ -209,6 +233,15 @@ export function SettingsPage() {
   const activeTitle = useMemo(() => {
     return navGroups.flatMap((group) => group.items).find((item) => item.key === activeGroup)?.label ?? "设置"
   }, [activeGroup])
+  const updatePercent = updateProgress.total > 0
+    ? Math.min(100, Math.round((updateProgress.downloaded / updateProgress.total) * 100))
+    : 0
+  const updateBusy = ["checking", "downloading", "installing"].includes(updatePhase)
+  let updateActionLabel = "检查"
+  if (updatePhase === "checking") updateActionLabel = "检查中"
+  if (updatePhase === "downloading") updateActionLabel = updateProgress.total > 0 ? `${updatePercent}%` : "下载中"
+  if (updatePhase === "installing") updateActionLabel = "安装中"
+  if (updatePhase === "available") updateActionLabel = "下载并安装"
 
   async function persistPreferences(nextPreferences: AppPreferences) {
     setPreferences(nextPreferences)
@@ -220,6 +253,69 @@ export function SettingsPage() {
     savedShortcutRef.current = saved.floatNoteShortcut
     applyPreferences(saved)
     showStatus("设置已保存。")
+  }
+
+  async function checkForAppUpdate() {
+    if (!window.oneMind.updates.supported) {
+      setUpdateMessage("当前桌面外壳不支持自动更新。")
+      return
+    }
+
+    setUpdatePhase("checking")
+    setUpdateInfo(null)
+    setUpdateMessage("正在连接更新服务...")
+    setUpdateProgress({ downloaded: 0, total: 0 })
+    try {
+      const update = await window.oneMind.updates.check()
+      if (!update) {
+        setUpdatePhase("idle")
+        setUpdateMessage("当前已是最新版本。")
+        return
+      }
+
+      setUpdateInfo(update)
+      setUpdatePhase("available")
+      const summary = update.body?.trim().split(/\r?\n/)[0]
+      setUpdateMessage(summary ? `发现 v${update.version} · ${summary}` : `发现新版本 v${update.version}。`)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      void window.oneMind.diagnostics.writeLog("error", "update_check_failed", detail)
+      setUpdatePhase("error")
+      setUpdateMessage("暂时无法获取更新信息，请检查网络后重试。")
+    }
+  }
+
+  async function installAppUpdate() {
+    if (!updateInfo) return
+
+    let downloaded = 0
+    setUpdatePhase("downloading")
+    setUpdateMessage(`正在下载 v${updateInfo.version}...`)
+    setUpdateProgress({ downloaded: 0, total: 0 })
+    try {
+      await window.oneMind.updates.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          setUpdateProgress({ downloaded: 0, total: event.data.contentLength ?? 0 })
+          return
+        }
+        if (event.event === "Progress") {
+          downloaded += event.data.chunkLength
+          setUpdateProgress((current) => ({ ...current, downloaded }))
+          return
+        }
+
+        setUpdatePhase("installing")
+        setUpdateMessage("下载完成，正在安装并重新启动...")
+      })
+      await window.oneMind.updates.relaunch()
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      void window.oneMind.diagnostics.writeLog("error", "update_install_failed", detail)
+      setUpdatePhase("error")
+      setUpdateMessage(detail.toLowerCase().includes("signature")
+        ? "更新签名验证失败，已停止安装。"
+        : "更新未完成，请检查网络后重试。")
+    }
   }
 
   async function persistShortcut(shortcut: string) {
@@ -721,16 +817,36 @@ export function SettingsPage() {
                   <div className="notes-panel-title">OneMind</div>
                   <p>个人 AI Agent 工作台</p>
                 </div>
-                <span className="settings-version">v0.1.0</span>
+                <span className="settings-version">{appVersion ? `v${appVersion}` : "读取中"}</span>
               </div>
 
-              <div className="settings-row">
-                <div>
+              <div className="settings-row settings-update-row">
+                <div className="settings-update-copy">
                   <div className="notes-panel-title">检查更新</div>
-                  <p>查看是否有新版本可用</p>
+                  <p className={updatePhase === "error" ? "settings-update-message error" : "settings-update-message"} aria-live="polite">
+                    {updateMessage}
+                  </p>
+                  {updatePhase === "downloading" ? (
+                    <div
+                      className={updateProgress.total > 0 ? "settings-update-progress" : "settings-update-progress indeterminate"}
+                      role="progressbar"
+                      aria-label="更新下载进度"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={updateProgress.total > 0 ? updatePercent : undefined}
+                    >
+                      <span style={{ width: updateProgress.total > 0 ? `${updatePercent}%` : "35%" }} />
+                    </div>
+                  ) : null}
                 </div>
-                <button type="button" className="secondary compact" onClick={() => showStatus("当前已是最新版本。")}>
-                  检查
+                <button
+                  type="button"
+                  className={updatePhase === "available" ? "compact settings-update-action" : "secondary compact settings-update-action"}
+                  disabled={!window.oneMind.updates.supported || updateBusy}
+                  onClick={() => void (updatePhase === "available" ? installAppUpdate() : checkForAppUpdate())}
+                >
+                  <RefreshCw className={updateBusy ? "settings-update-spinner" : ""} size={14} aria-hidden="true" />
+                  {updateActionLabel}
                 </button>
               </div>
             </>

@@ -75,6 +75,18 @@ type DebugModeReport = {
   source: string
 }
 
+type AppUpdateInfo = {
+  currentVersion: string
+  version: string
+  date?: string
+  body?: string
+}
+
+type AppUpdateDownloadEvent =
+  | { event: 'Started'; data: { contentLength?: number } }
+  | { event: 'Progress'; data: { chunkLength: number } }
+  | { event: 'Finished' }
+
 type SyncPhase = 'idle' | 'initializing' | 'committing' | 'fetching' | 'rebasing' | 'pushing' | 'conflicted' | 'error'
 
 type SyncConfig = {
@@ -261,6 +273,12 @@ interface Window {
       getDebugMode: () => Promise<DebugModeReport>
       writeLog: (level: string, message: string, context?: string) => Promise<void>
       openDevtools: (label?: string) => Promise<boolean>
+    }
+    updates: {
+      supported: boolean
+      check: () => Promise<AppUpdateInfo | null>
+      downloadAndInstall: (onEvent?: (event: AppUpdateDownloadEvent) => void) => Promise<void>
+      relaunch: () => Promise<void>
     }
     sync: {
       readConfig: (workspacePath: string) => Promise<SyncConfig>

@@ -190,5 +190,11 @@ contextBridge.exposeInMainWorld('oneMind', {
     getDebugMode: () => Promise.resolve({ enabled: false, source: 'electron' }),
     writeLog: () => Promise.resolve(),
     openDevtools: () => Promise.resolve(false)
+  },
+  updates: {
+    supported: false,
+    check: () => Promise.resolve(null),
+    downloadAndInstall: () => Promise.reject(new Error('Automatic updates are not available in Electron.')),
+    relaunch: () => Promise.resolve()
   }
 })

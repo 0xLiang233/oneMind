@@ -1,5 +1,9 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
+import { relaunch } from "@tauri-apps/plugin-process"
+import { check as checkForUpdate, type Update } from "@tauri-apps/plugin-updater"
+
+let pendingUpdate: Update | null = null
 
 export function createTauriBridge(): Window["oneMind"] {
   return {
@@ -125,6 +129,36 @@ export function createTauriBridge(): Window["oneMind"] {
       getDebugMode: () => invoke<DebugModeReport>("diagnostics_get_debug_mode"),
       writeLog: (level, message, context) => invoke<void>("write_shell_log", { level, message, context }),
       openDevtools: (label) => invoke<boolean>("diagnostics_open_devtools", { label })
+    },
+    updates: {
+      supported: true,
+      check: async () => {
+        if (pendingUpdate) {
+          await pendingUpdate.close()
+          pendingUpdate = null
+        }
+
+        const update = await checkForUpdate({ timeout: 30_000 })
+        pendingUpdate = update
+        if (!update) return null
+
+        return {
+          currentVersion: update.currentVersion,
+          version: update.version,
+          date: update.date,
+          body: update.body
+        }
+      },
+      downloadAndInstall: async (onEvent) => {
+        if (!pendingUpdate) {
+          throw new Error("No update is ready to install.")
+        }
+
+        const update = pendingUpdate
+        await update.downloadAndInstall(onEvent)
+        pendingUpdate = null
+      },
+      relaunch
     },
     sync: {
       readConfig: (workspacePath) => invoke<SyncConfig>("sync_read_config", { workspacePath }),

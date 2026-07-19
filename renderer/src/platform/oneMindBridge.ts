@@ -165,6 +165,12 @@ export function installOneMindBridgeFallback() {
       writeLog: () => Promise.resolve(),
       openDevtools: () => Promise.resolve(false)
     },
+    updates: {
+      supported: false,
+      check: () => Promise.resolve(null),
+      downloadAndInstall: () => unsupported<void>("updates.downloadAndInstall"),
+      relaunch: () => Promise.resolve()
+    },
     sync: {
       readConfig: () => Promise.resolve(unsupportedSyncConfig),
       writeConfig: (_workspacePath, config) => Promise.resolve(config),

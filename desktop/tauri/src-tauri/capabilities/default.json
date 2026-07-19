@@ -4,6 +4,8 @@
   "description": "Capability for OneMind desktop windows",
   "windows": ["main", "float-note"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "process:allow-restart",
+    "updater:default"
   ]
 }
