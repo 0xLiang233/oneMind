@@ -147,6 +147,11 @@ export function useWorkspaceSync(workspacePath: string, onWorkspaceChanged: () =
     return window.oneMind.sync.testRemote(workspacePath, remoteUrl)
   }, [workspacePath])
 
+  const listChanges = useCallback(async () => {
+    if (!workspacePath) return []
+    return window.oneMind.sync.listChanges(workspacePath)
+  }, [workspacePath])
+
   const authenticateGitHub = useCallback(async (username?: string) => {
     if (!workspacePath) return null
     setError("")
@@ -158,5 +163,5 @@ export function useWorkspaceSync(workspacePath: string, onWorkspaceChanged: () =
     }
   }, [workspacePath])
 
-  return { config, status, preflight, error, refresh, run, saveConfig, saveIdentity, testRemote, authenticateGitHub, initialize }
+  return { config, status, preflight, error, refresh, run, saveConfig, saveIdentity, testRemote, listChanges, authenticateGitHub, initialize }
 }

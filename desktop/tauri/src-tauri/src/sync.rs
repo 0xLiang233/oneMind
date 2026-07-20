@@ -62,6 +62,15 @@ pub struct SyncStatus {
     pub message: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncChange {
+    pub kind: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_path: Option<String>,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncResult {
@@ -277,9 +286,97 @@ fn ensure_gitignore(root: &Path) -> Result<(), String> {
 }
 
 fn count_changes(root: &Path) -> u32 {
-    git(root, &["status", "--porcelain", "-uall"])
-        .map(|value| value.lines().count() as u32)
+    list_changes(root)
+        .map(|value| value.len() as u32)
         .unwrap_or(0)
+}
+
+fn status_change(kind: &str, path: &[u8], previous_path: Option<&[u8]>) -> SyncChange {
+    SyncChange {
+        kind: kind.to_string(),
+        path: String::from_utf8_lossy(path).into_owned(),
+        previous_path: previous_path.map(|value| String::from_utf8_lossy(value).into_owned()),
+    }
+}
+
+fn classify_xy(xy: &[u8]) -> &'static str {
+    if xy.contains(&b'D') {
+        "deleted"
+    } else if xy.contains(&b'A') {
+        "added"
+    } else {
+        "modified"
+    }
+}
+
+fn status_path(record: &[u8], field_count: usize) -> Option<(&[u8], &[u8])> {
+    let mut fields = record.splitn(field_count, |value| *value == b' ');
+    let marker = fields.next()?;
+    let xy = fields.next()?;
+    let path = fields.nth(field_count.checked_sub(3)?)?;
+    (!marker.is_empty() && xy.len() == 2 && !path.is_empty()).then_some((xy, path))
+}
+
+fn parse_status_changes(raw: &[u8]) -> Result<Vec<SyncChange>, String> {
+    let records = raw.split(|value| *value == 0).collect::<Vec<_>>();
+    let mut changes = Vec::new();
+    let mut index = 0;
+
+    while index < records.len() {
+        let record = records[index];
+        index += 1;
+        if record.is_empty() {
+            continue;
+        }
+
+        match record[0] {
+            b'1' => {
+                let (xy, path) = status_path(record, 9)
+                    .ok_or_else(|| "Git 返回了无效的普通变更记录。".to_string())?;
+                changes.push(status_change(classify_xy(xy), path, None));
+            }
+            b'2' => {
+                let (_, path) = status_path(record, 10)
+                    .ok_or_else(|| "Git 返回了无效的重命名记录。".to_string())?;
+                let previous_path = records
+                    .get(index)
+                    .copied()
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "Git 重命名记录缺少原文件路径。".to_string())?;
+                index += 1;
+                changes.push(status_change("renamed", path, Some(previous_path)));
+            }
+            b'u' => {
+                let (_, path) = status_path(record, 11)
+                    .ok_or_else(|| "Git 返回了无效的冲突记录。".to_string())?;
+                changes.push(status_change("conflicted", path, None));
+            }
+            b'?' => {
+                let path = record
+                    .strip_prefix(b"? ")
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "Git 返回了无效的未跟踪文件记录。".to_string())?;
+                changes.push(status_change("added", path, None));
+            }
+            b'!' | b'#' => {}
+            _ => return Err("Git 返回了无法识别的变更记录。".to_string()),
+        }
+    }
+
+    Ok(changes)
+}
+
+fn list_changes(root: &Path) -> Result<Vec<SyncChange>, String> {
+    let output = git_output(
+        root,
+        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+    )?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Err(if stderr.is_empty() { stdout } else { stderr });
+    }
+    parse_status_changes(&output.stdout)
 }
 
 fn current_branch(root: &Path, fallback: &str) -> String {
@@ -403,6 +500,15 @@ pub fn sync_write_config(
 pub fn sync_get_status(workspace_path: String) -> Result<SyncStatus, String> {
     let root = workspace_root(&workspace_path)?;
     Ok(status(&root, "idle", ""))
+}
+
+#[tauri::command]
+pub fn sync_list_changes(workspace_path: String) -> Result<Vec<SyncChange>, String> {
+    let root = workspace_root(&workspace_path)?;
+    if !is_repository(&root) {
+        return Ok(Vec::new());
+    }
+    list_changes(&root)
 }
 
 #[tauri::command]
@@ -651,4 +757,76 @@ pub fn sync_run(
         success: true,
         status: next,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_status_changes, SyncChange};
+
+    fn change(kind: &str, path: &str, previous_path: Option<&str>) -> SyncChange {
+        SyncChange {
+            kind: kind.to_string(),
+            path: path.to_string(),
+            previous_path: previous_path.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn parses_added_modified_and_deleted_changes() {
+        let raw = concat!(
+            "? notes/新 笔记.md\0",
+            "1 .M N... 100644 100644 100644 abcdef1 abcdef1 notes/需求 文档.md\0",
+            "1 D. N... 100644 000000 000000 abcdef2 0000000 notes/旧文档.md\0",
+            "1 A. N... 000000 100644 100644 0000000 abcdef3 notes/已暂存.md\0",
+        );
+
+        assert_eq!(
+            parse_status_changes(raw.as_bytes()).unwrap(),
+            vec![
+                change("added", "notes/新 笔记.md", None),
+                change("modified", "notes/需求 文档.md", None),
+                change("deleted", "notes/旧文档.md", None),
+                change("added", "notes/已暂存.md", None),
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_rename_with_both_paths() {
+        let raw = concat!(
+            "2 R. N... 100644 100644 100644 abcdef1 abcdef1 R100 notes/新 名称.md\0",
+            "notes/旧 名称.md\0",
+        );
+
+        assert_eq!(
+            parse_status_changes(raw.as_bytes()).unwrap(),
+            vec![change(
+                "renamed",
+                "notes/新 名称.md",
+                Some("notes/旧 名称.md")
+            )]
+        );
+    }
+
+    #[test]
+    fn parses_conflict_and_preserves_newlines_in_paths() {
+        let raw = concat!(
+            "u UU N... 100644 100644 100644 100644 abcdef1 abcdef2 abcdef3 notes/冲突.md\0",
+            "? notes/含\n换行.md\0",
+        );
+
+        assert_eq!(
+            parse_status_changes(raw.as_bytes()).unwrap(),
+            vec![
+                change("conflicted", "notes/冲突.md", None),
+                change("added", "notes/含\n换行.md", None),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_rename_without_previous_path() {
+        let raw = b"2 R. N... 100644 100644 100644 aaaaaaa bbbbbbb R100 notes/new.md\0";
+        assert!(parse_status_changes(raw).is_err());
+    }
 }

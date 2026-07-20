@@ -177,6 +177,7 @@ export function createTauriBridge(): Window["oneMind"] {
       readConfig: (workspacePath) => invoke<SyncConfig>("sync_read_config", { workspacePath }),
       writeConfig: (workspacePath, config) => invoke<SyncConfig>("sync_write_config", { workspacePath, config }),
       getStatus: (workspacePath) => invoke<SyncStatus>("sync_get_status", { workspacePath }),
+      listChanges: (workspacePath) => invoke<SyncChange[]>("sync_list_changes", { workspacePath }),
       preflight: (workspacePath) => invoke<SyncPreflight>("sync_preflight", { workspacePath }),
       writeIdentity: (workspacePath, identity) =>
         invoke<GitIdentity>("sync_write_identity", { workspacePath, identity }),

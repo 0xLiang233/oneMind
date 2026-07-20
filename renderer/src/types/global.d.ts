@@ -111,6 +111,14 @@ type SyncStatus = {
   message: string
 }
 
+type SyncChangeKind = 'added' | 'modified' | 'deleted' | 'renamed' | 'conflicted'
+
+type SyncChange = {
+  kind: SyncChangeKind
+  path: string
+  previousPath?: string
+}
+
 type SyncResult = {
   success: boolean
   status: SyncStatus
@@ -304,6 +312,7 @@ interface Window {
       readConfig: (workspacePath: string) => Promise<SyncConfig>
       writeConfig: (workspacePath: string, config: SyncConfig) => Promise<SyncConfig>
       getStatus: (workspacePath: string) => Promise<SyncStatus>
+      listChanges: (workspacePath: string) => Promise<SyncChange[]>
       preflight: (workspacePath: string) => Promise<SyncPreflight>
       writeIdentity: (workspacePath: string, identity: GitIdentity) => Promise<GitIdentity>
       testRemote: (workspacePath: string, remoteUrl: string) => Promise<RemoteCheck>

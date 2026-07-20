@@ -21,6 +21,7 @@ type OutletContext = {
     saveConfig: (config: SyncConfig) => Promise<SyncConfig>
     saveIdentity: (identity: GitIdentity) => Promise<GitIdentity>
     testRemote: (remoteUrl: string) => Promise<RemoteCheck | null>
+    listChanges: () => Promise<SyncChange[]>
     authenticateGitHub: (username?: string) => Promise<AuthenticationResult | null>
     initialize: (config: SyncConfig) => Promise<SyncResult | null>
   }
@@ -686,6 +687,7 @@ export function SettingsPage() {
                 onSaveConfig={workspaceSync.saveConfig}
                 onSaveIdentity={workspaceSync.saveIdentity}
                 onTestRemote={workspaceSync.testRemote}
+                onListChanges={workspaceSync.listChanges}
                 onAuthenticateGitHub={workspaceSync.authenticateGitHub}
               />
             ) : (

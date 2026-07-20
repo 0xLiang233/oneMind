@@ -180,6 +180,7 @@ export function installOneMindBridgeFallback() {
       readConfig: () => Promise.resolve(unsupportedSyncConfig),
       writeConfig: (_workspacePath, config) => Promise.resolve(config),
       getStatus: () => Promise.resolve(unsupportedSyncStatus),
+      listChanges: () => Promise.resolve([]),
       preflight: () => Promise.resolve(unsupportedSyncPreflight),
       writeIdentity: (_workspacePath, identity) => Promise.resolve(identity),
       testRemote: (_workspacePath, remoteUrl) => Promise.resolve({

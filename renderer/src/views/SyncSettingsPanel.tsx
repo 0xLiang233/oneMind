@@ -1,5 +1,5 @@
-import { useState } from "react"
-import { AlertTriangle, Check, GitBranch, RefreshCw } from "../icons"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { AlertTriangle, Check, ChevronDown, FilePlus, GitBranch, MoveRight, PenLine, RefreshCw, Trash2 } from "../icons"
 
 type Props = {
   config: SyncConfig
@@ -11,6 +11,7 @@ type Props = {
   onSaveConfig: (config: SyncConfig) => Promise<SyncConfig>
   onSaveIdentity: (identity: GitIdentity) => Promise<GitIdentity>
   onTestRemote: (remoteUrl: string) => Promise<RemoteCheck | null>
+  onListChanges: () => Promise<SyncChange[]>
   onAuthenticateGitHub: (username?: string) => Promise<AuthenticationResult | null>
 }
 
@@ -56,6 +57,32 @@ function statusLabel(status: SyncStatus) {
   return status.message || "已同步"
 }
 
+const changeLabels: Record<SyncChangeKind, string> = {
+  added: "新增",
+  modified: "修改",
+  deleted: "删除",
+  renamed: "重命名",
+  conflicted: "冲突"
+}
+
+const changeKinds: SyncChangeKind[] = ["added", "modified", "deleted", "renamed", "conflicted"]
+
+function changePathParts(path: string) {
+  const normalized = path.replaceAll("\\", "/")
+  const separator = normalized.lastIndexOf("/")
+  return separator < 0
+    ? { name: normalized, directory: "工作区根目录" }
+    : { name: normalized.slice(separator + 1), directory: normalized.slice(0, separator) }
+}
+
+function ChangeKindIcon({ kind }: { kind: SyncChangeKind }) {
+  if (kind === "added") return <FilePlus size={14} strokeWidth={1.8} />
+  if (kind === "modified") return <PenLine size={14} strokeWidth={1.8} />
+  if (kind === "deleted") return <Trash2 size={14} strokeWidth={1.8} />
+  if (kind === "renamed") return <MoveRight size={14} strokeWidth={1.8} />
+  return <AlertTriangle size={14} strokeWidth={1.8} />
+}
+
 function CheckMark({ ready, busy = false }: { ready: boolean; busy?: boolean }) {
   return (
     <span className={`sync-check-mark ${ready ? "ready" : "pending"} ${busy ? "busy" : ""}`} aria-hidden="true">
@@ -78,6 +105,7 @@ export function SyncSettingsPanel({
   onSaveConfig,
   onSaveIdentity,
   onTestRemote,
+  onListChanges,
   onAuthenticateGitHub
 }: Props) {
   const [draft, setDraft] = useState(config)
@@ -90,12 +118,51 @@ export function SyncSettingsPanel({
   const [authStarted, setAuthStarted] = useState(false)
   const [authMessage, setAuthMessage] = useState("")
   const [formError, setFormError] = useState("")
+  const [changesExpanded, setChangesExpanded] = useState(false)
+  const [changes, setChanges] = useState<SyncChange[]>([])
+  const [changesLoading, setChangesLoading] = useState(false)
+  const [changesError, setChangesError] = useState("")
+  const [changeFilter, setChangeFilter] = useState<"all" | SyncChangeKind>("all")
   const saving = localAction === "savingIdentity" || localAction === "initializing" || localAction === "savingRepository" || localAction === "savingPreferences"
   const checkingRemote = localAction === "testingRemote"
   const authenticating = localAction === "openingAuth"
   const syncing = localAction === "syncing" || busyPhases.has(status.phase)
   const isBusy = localAction !== null || busyPhases.has(status.phase)
   const needsSetup = !status.configured || !preflight.gitAvailable || !preflight.identityConfigured
+
+  const loadChanges = useCallback(async () => {
+    setChangesLoading(true)
+    setChangesError("")
+    try {
+      setChanges(await onListChanges())
+    } catch (nextError) {
+      setChangesError(String(nextError))
+    } finally {
+      setChangesLoading(false)
+    }
+  }, [onListChanges])
+
+  useEffect(() => {
+    if (!changesExpanded || !status.repositoryInitialized || syncing) return
+    const timer = window.setTimeout(() => void loadChanges(), 0)
+    return () => window.clearTimeout(timer)
+  }, [changesExpanded, loadChanges, status.changedFiles, status.repositoryInitialized, syncing])
+
+  const changeCounts = useMemo(() => {
+    return changes.reduce<Record<SyncChangeKind, number>>((counts, change) => {
+      counts[change.kind] += 1
+      return counts
+    }, { added: 0, modified: 0, deleted: 0, renamed: 0, conflicted: 0 })
+  }, [changes])
+  const effectiveChangeFilter = changeFilter !== "all" && changeCounts[changeFilter] === 0 ? "all" : changeFilter
+  const visibleChanges = useMemo(() => {
+    const filtered = effectiveChangeFilter === "all" ? changes : changes.filter((change) => change.kind === effectiveChangeFilter)
+    return [...filtered].sort((left, right) => {
+      if (left.kind === "conflicted" && right.kind !== "conflicted") return -1
+      if (right.kind === "conflicted" && left.kind !== "conflicted") return 1
+      return left.path.localeCompare(right.path, "zh-CN")
+    })
+  }, [changes, effectiveChangeFilter])
 
   if (sourceConfig !== config) {
     setSourceConfig(config)
@@ -356,10 +423,78 @@ export function SyncSettingsPanel({
               <p>{statusLabel(status)}</p>
               {(error || status.message) && status.phase !== "idle" ? <p className="sync-error-detail">{error || status.message}</p> : null}
             </div>
-            <div className={`sync-state-mark ${status.phase}`} aria-hidden="true">
-              {status.phase === "conflicted" || status.phase === "error" ? <AlertTriangle size={15} /> : busyPhases.has(status.phase) ? <RefreshCw size={15} /> : <Check size={15} />}
+            <div className="sync-status-side">
+              {status.repositoryInitialized ? (
+                <button
+                  type="button"
+                  className="sync-change-toggle"
+                  aria-expanded={changesExpanded}
+                  aria-controls="sync-change-details"
+                  onClick={() => setChangesExpanded((expanded) => !expanded)}
+                >
+                  {changesExpanded ? "收起明细" : "查看明细"}
+                  <ChevronDown size={14} aria-hidden="true" />
+                </button>
+              ) : null}
+              <div className={`sync-state-mark ${status.phase}`} aria-hidden="true">
+                {status.phase === "conflicted" || status.phase === "error" ? <AlertTriangle size={15} /> : busyPhases.has(status.phase) ? <RefreshCw size={15} /> : <Check size={15} />}
+              </div>
             </div>
           </div>
+
+          {changesExpanded ? (
+            <section className="sync-change-details" id="sync-change-details" aria-label="待同步变更">
+              <div className="sync-change-toolbar">
+                <div className="sync-change-heading">
+                  <span>待同步变更</span>
+                  <small>{changesLoading ? "读取中" : `${changes.length} 个文件`}</small>
+                </div>
+                <button
+                  type="button"
+                  className="sync-change-refresh"
+                  aria-label="刷新变更明细"
+                  title="刷新变更明细"
+                  disabled={changesLoading || syncing}
+                  onClick={() => void loadChanges()}
+                >
+                  <RefreshCw size={14} aria-hidden="true" />
+                </button>
+              </div>
+              <div className="sync-change-filters" aria-label="筛选变更类型">
+                <button type="button" className={effectiveChangeFilter === "all" ? "active" : ""} aria-pressed={effectiveChangeFilter === "all"} onClick={() => setChangeFilter("all")}>全部 <span>{changes.length}</span></button>
+                {changeKinds.filter((kind) => changeCounts[kind] > 0).map((kind) => (
+                  <button key={kind} type="button" className={effectiveChangeFilter === kind ? "active" : ""} aria-pressed={effectiveChangeFilter === kind} onClick={() => setChangeFilter(kind)}>{changeLabels[kind]} <span>{changeCounts[kind]}</span></button>
+                ))}
+              </div>
+              {changesError ? (
+                <div className="sync-change-message error" role="status"><AlertTriangle size={14} /><span>无法读取变更明细，请刷新后重试。</span></div>
+              ) : changesLoading && changes.length === 0 ? (
+                <div className="sync-change-message"><LoadingLabel label="正在读取变更" /></div>
+              ) : visibleChanges.length === 0 ? (
+                <div className="sync-change-message">{changes.length === 0 ? "没有待同步的文件" : "当前筛选下没有文件"}</div>
+              ) : (
+                <div className="sync-change-list">
+                  {visibleChanges.map((change) => {
+                    const path = changePathParts(change.path)
+                    return (
+                      <div className={`sync-change-item ${change.kind}`} key={`${change.kind}:${change.previousPath ?? ""}:${change.path}`}>
+                        <span className="sync-change-kind" aria-label={changeLabels[change.kind]} title={changeLabels[change.kind]}><ChangeKindIcon kind={change.kind} /></span>
+                        <div className="sync-change-file">
+                          <div className="sync-change-name">{path.name}</div>
+                          <div className="sync-change-path">
+                            <span className="sync-change-description">{changeLabels[change.kind]}</span>
+                            <span className="sync-change-separator" aria-hidden="true">·</span>
+                            {change.previousPath ? <><span>{change.previousPath}</span><MoveRight size={11} aria-hidden="true" /></> : null}
+                            <span>{change.previousPath ? change.path : path.directory}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </section>
+          ) : null}
 
           <div className="sync-connection-summary">
             <span><CheckMark ready={preflight.gitAvailable} />Git</span>
@@ -406,8 +541,6 @@ export function SyncSettingsPanel({
             <div><div className="notes-panel-title">启动时同步</div><p>打开工作区后自动获取其他设备的更改。</p></div>
             <button type="button" className={draft.pullOnStartup ? "settings-toggle active" : "settings-toggle"} aria-label="启动时同步" aria-pressed={draft.pullOnStartup} disabled={isBusy} onClick={() => void updateConfig({ ...draft, pullOnStartup: !draft.pullOnStartup })} />
           </div>
-
-          {status.conflicts.length > 0 ? <div className="sync-conflict-list"><div className="notes-panel-title">冲突文件</div>{status.conflicts.map((file) => <div key={file}>{file}</div>)}</div> : null}
 
           <div className="sync-settings-actions">
             <button type="button" className="secondary compact" disabled={isBusy || !draft.remoteUrl.trim()} onClick={() => void testRemote()}>{checkingRemote ? <LoadingLabel label="检查中" /> : "测试连接"}</button>

@@ -1940,7 +1940,7 @@ body.float-note-shell #root {
   border-radius: 8px;
   background: color-mix(in srgb, var(--color-bg-elevated) 94%, transparent);
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-columns: 28px minmax(0, 1fr);
   align-items: start;
   gap: 14px;
   padding: 18px;
@@ -2822,6 +2822,25 @@ button .sync-loading-icon + span { white-space: nowrap; }
 .sync-status-copy {
   min-width: 0;
 }
+.sync-status-side {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.sync-change-toggle {
+  min-height: 28px;
+  padding: 5px 7px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.sync-change-toggle:hover { background: var(--color-bg-hover); color: var(--color-text-primary); }
+.sync-change-toggle svg { transition: transform var(--transition-fast); }
+.sync-change-toggle[aria-expanded='true'] svg { transform: rotate(180deg); }
 .sync-state-mark {
   width: 30px;
   height: 30px;
@@ -2833,6 +2852,166 @@ button .sync-loading-icon + span { white-space: nowrap; }
   display: grid;
   place-items: center;
 }
+.sync-change-details {
+  min-width: 0;
+  padding: 0 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.sync-change-toolbar {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.sync-change-heading {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.sync-change-heading small {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+button.sync-change-refresh {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  padding: 0;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  display: grid;
+  place-items: center;
+}
+button.sync-change-refresh:hover {
+  border-color: var(--color-border-default);
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+.sync-change-filters {
+  width: max-content;
+  max-width: 100%;
+  margin-bottom: var(--space-2);
+  padding: 3px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-overlay);
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+}
+.sync-change-filters button {
+  min-height: 26px;
+  padding: 4px 9px;
+  border-radius: calc(var(--radius-md) - 2px);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  font-size: 11px;
+}
+.sync-change-filters button:hover { background: var(--color-bg-hover); color: var(--color-text-secondary); }
+.sync-change-filters button.active {
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .08);
+}
+.sync-change-filters button span {
+  margin-left: 3px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.sync-change-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border-top: 1px solid var(--color-border-subtle);
+}
+.sync-change-item {
+  --sync-change-color: var(--color-warning);
+  min-width: 0;
+  min-height: 52px;
+  position: relative;
+  padding: 8px 10px 8px 13px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+.sync-change-item::before {
+  content: "";
+  position: absolute;
+  inset: 7px auto 7px 0;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--sync-change-color);
+}
+.sync-change-item:hover { background: color-mix(in srgb, var(--sync-change-color) 5%, transparent); }
+.sync-change-item.added { --sync-change-color: var(--color-success); }
+.sync-change-item.modified { --sync-change-color: var(--color-warning); }
+.sync-change-item.deleted,
+.sync-change-item.conflicted { --sync-change-color: var(--color-danger); }
+.sync-change-item.renamed { --sync-change-color: var(--color-accent-secondary); }
+.sync-change-kind {
+  width: 26px;
+  height: 26px;
+  color: var(--sync-change-color);
+  display: grid;
+  place-items: center;
+}
+.sync-change-file { min-width: 0; display: grid; gap: 3px; }
+.sync-change-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-change-path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.sync-change-path span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sync-change-path svg { flex: 0 0 auto; }
+.sync-change-path .sync-change-description {
+  flex: 0 0 auto;
+  color: var(--sync-change-color);
+  font-family: var(--font-ui);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.sync-change-path .sync-change-separator {
+  flex: 0 0 auto;
+  color: var(--color-border-strong);
+}
+.sync-change-message {
+  min-height: 72px;
+  padding: var(--space-4);
+  border-top: 1px solid var(--color-border-subtle);
+  color: var(--color-text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 12px;
+}
+.sync-change-message.error { color: var(--color-danger); }
 .sync-state-mark.initializing svg,
 .sync-state-mark.committing svg,
 .sync-state-mark.fetching svg,
@@ -3044,6 +3223,9 @@ button .sync-loading-icon + span { white-space: nowrap; }
 }
 .sync-connection-summary .sync-check-mark { width: 20px; height: 20px; flex-basis: 20px; }
 @container (max-width: 560px) {
+  .sync-status-row { align-items: flex-start; }
+  .sync-status-side { flex-direction: column-reverse; align-items: flex-end; }
+  .sync-change-filters { width: 100%; }
   .sync-repository-fields { grid-template-columns: 1fr; }
   .sync-inline-form { grid-template-columns: 1fr; }
   .sync-remote-actions { align-items: stretch; flex-direction: column; }

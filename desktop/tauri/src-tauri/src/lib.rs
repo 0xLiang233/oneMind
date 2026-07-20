@@ -4088,6 +4088,7 @@ pub fn run() {
             sync::sync_read_config,
             sync::sync_write_config,
             sync::sync_get_status,
+            sync::sync_list_changes,
             sync::sync_preflight,
             sync::sync_write_identity,
             sync::sync_test_remote,
