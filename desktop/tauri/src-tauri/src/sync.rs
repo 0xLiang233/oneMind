@@ -6,7 +6,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
-    sync::Mutex,
+    sync::{Arc, Mutex, OnceLock},
 };
 use tauri::{AppHandle, Emitter, State};
 
@@ -28,10 +28,25 @@ const LEGACY_CONFIG_IGNORE_ENTRIES: &[&str] = &[
 const CONFIG_OVERWRITE_REQUIRED: &str = "REMOTE_CONFIG_OVERWRITE_REQUIRED";
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+static GIT_PROCESS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Default)]
 pub struct SyncState {
-    operation: Mutex<()>,
+    operation: Arc<Mutex<()>>,
+}
+
+async fn run_git_operation<T: Send + 'static>(
+    operation: Arc<Mutex<()>>,
+    task: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = operation
+            .lock()
+            .map_err(|_| "同步操作队列不可用。".to_string())?;
+        task()
+    })
+    .await
+    .map_err(|error| format!("同步后台任务失败: {error}"))?
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -204,6 +219,10 @@ fn git_command() -> Command {
 }
 
 fn git_output(root: &Path, args: &[&str]) -> Result<Output, String> {
+    let _guard = GIT_PROCESS_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "Git 操作队列不可用。".to_string())?;
     git_command()
         .args(args)
         .current_dir(root)
@@ -212,6 +231,10 @@ fn git_output(root: &Path, args: &[&str]) -> Result<Output, String> {
 }
 
 fn git_output_with_editor(root: &Path, args: &[&str]) -> Result<Output, String> {
+    let _guard = GIT_PROCESS_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "Git 操作队列不可用。".to_string())?;
     git_command()
         .args(args)
         .env("GIT_EDITOR", "true")
@@ -232,6 +255,9 @@ fn git(root: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn git_available() -> bool {
+    let Ok(_guard) = GIT_PROCESS_LOCK.get_or_init(|| Mutex::new(())).lock() else {
+        return false;
+    };
     git_command()
         .arg("--version")
         .output()
@@ -240,6 +266,9 @@ fn git_available() -> bool {
 }
 
 fn git_version() -> String {
+    let Ok(_guard) = GIT_PROCESS_LOCK.get_or_init(|| Mutex::new(())).lock() else {
+        return String::new();
+    };
     git_command()
         .arg("--version")
         .output()
@@ -628,54 +657,73 @@ pub fn sync_write_config(
 }
 
 #[tauri::command]
-pub fn sync_get_status(workspace_path: String) -> Result<SyncStatus, String> {
-    let root = workspace_root(&workspace_path)?;
-    Ok(status(&root, "idle", ""))
-}
-
-#[tauri::command]
-pub fn sync_list_changes(workspace_path: String) -> Result<Vec<SyncChange>, String> {
-    let root = workspace_root(&workspace_path)?;
-    if !is_repository(&root) {
-        return Ok(Vec::new());
-    }
-    list_changes(&root)
-}
-
-#[tauri::command]
-pub fn sync_preflight(workspace_path: String) -> Result<SyncPreflight, String> {
-    let root = workspace_root(&workspace_path)?;
-    let available = git_available();
-    let repository_initialized = available && is_repository(&root);
-    let identity = if available {
-        read_identity(&root)
-    } else {
-        GitIdentity {
-            name: String::new(),
-            email: String::new(),
-        }
-    };
-    let helper = if available {
-        credential_helper(&root)
-    } else {
-        String::new()
-    };
-    let configured_remote = if repository_initialized {
-        remote_url(&root)
-    } else {
-        read_config(&root).remote_url
-    };
-    Ok(SyncPreflight {
-        git_available: available,
-        git_version: git_version(),
-        repository_initialized,
-        identity_configured: !identity.name.trim().is_empty() && !identity.email.trim().is_empty(),
-        identity,
-        credential_helper_ready: !helper.trim().is_empty(),
-        credential_helper: helper,
-        remote_configured: !configured_remote.trim().is_empty(),
-        remote_url: configured_remote,
+pub async fn sync_get_status(
+    state: State<'_, SyncState>,
+    workspace_path: String,
+) -> Result<SyncStatus, String> {
+    run_git_operation(state.operation.clone(), move || {
+        let root = workspace_root(&workspace_path)?;
+        Ok(status(&root, "idle", ""))
     })
+    .await
+}
+
+#[tauri::command]
+pub async fn sync_list_changes(
+    state: State<'_, SyncState>,
+    workspace_path: String,
+) -> Result<Vec<SyncChange>, String> {
+    run_git_operation(state.operation.clone(), move || {
+        let root = workspace_root(&workspace_path)?;
+        if !is_repository(&root) {
+            return Ok(Vec::new());
+        }
+        list_changes(&root)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn sync_preflight(
+    state: State<'_, SyncState>,
+    workspace_path: String,
+) -> Result<SyncPreflight, String> {
+    run_git_operation(state.operation.clone(), move || {
+        let root = workspace_root(&workspace_path)?;
+        let available = git_available();
+        let repository_initialized = available && is_repository(&root);
+        let identity = if available {
+            read_identity(&root)
+        } else {
+            GitIdentity {
+                name: String::new(),
+                email: String::new(),
+            }
+        };
+        let helper = if available {
+            credential_helper(&root)
+        } else {
+            String::new()
+        };
+        let configured_remote = if repository_initialized {
+            remote_url(&root)
+        } else {
+            read_config(&root).remote_url
+        };
+        Ok(SyncPreflight {
+            git_available: available,
+            git_version: git_version(),
+            repository_initialized,
+            identity_configured: !identity.name.trim().is_empty()
+                && !identity.email.trim().is_empty(),
+            identity,
+            credential_helper_ready: !helper.trim().is_empty(),
+            credential_helper: helper,
+            remote_configured: !configured_remote.trim().is_empty(),
+            remote_url: configured_remote,
+        })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -912,80 +960,79 @@ pub fn sync_initialize(
 }
 
 #[tauri::command]
-pub fn sync_run(
+pub async fn sync_run(
     app: AppHandle,
     state: State<'_, SyncState>,
     workspace_path: String,
 ) -> Result<SyncResult, String> {
-    let _guard = state
-        .operation
-        .try_lock()
-        .map_err(|_| "另一个同步操作正在进行。".to_string())?;
-    let root = workspace_root(&workspace_path)?;
-    if !is_repository(&root) {
-        return Err("当前工作区尚未初始化同步。".to_string());
-    }
-    if rebase_in_progress(&root) {
-        let next = status(&root, "conflicted", "请先处理同步冲突。".to_string());
-        emit_status(&app, &next);
-        return Ok(SyncResult {
-            success: false,
-            status: next,
-        });
-    }
-    let config = read_config(&root);
-    ensure_gitignore(&root)?;
+    run_git_operation(state.operation.clone(), move || {
+        let root = workspace_root(&workspace_path)?;
+        if !is_repository(&root) {
+            return Err("当前工作区尚未初始化同步。".to_string());
+        }
+        if rebase_in_progress(&root) {
+            let next = status(&root, "conflicted", "请先处理同步冲突。".to_string());
+            emit_status(&app, &next);
+            return Ok(SyncResult {
+                success: false,
+                status: next,
+            });
+        }
+        let config = read_config(&root);
+        ensure_gitignore(&root)?;
 
-    emit_status(&app, &status(&root, "committing", "正在保存本地更改…"));
-    git(&root, &["add", "-A", "--", "."])?;
-    let has_staged_changes = git(&root, &["diff", "--cached", "--quiet"]).is_err();
-    if has_staged_changes {
-        let message = format!(
-            "OneMind sync: {}",
-            chrono::Local::now().format("%Y-%m-%d %H:%M")
-        );
-        git(&root, &["commit", "-m", &message])?;
-    }
+        emit_status(&app, &status(&root, "committing", "正在保存本地更改…"));
+        git(&root, &["add", "-A", "--", "."])?;
+        let has_staged_changes = git(&root, &["diff", "--cached", "--quiet"]).is_err();
+        if has_staged_changes {
+            let message = format!(
+                "OneMind sync: {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M")
+            );
+            git(&root, &["commit", "-m", &message])?;
+        }
 
-    let remote = remote_url(&root);
-    if remote.is_empty() {
-        let next = status(&root, "idle", "本地更改已提交");
-        emit_status(&app, &next);
-        return Ok(SyncResult {
-            success: true,
-            status: next,
-        });
-    }
+        let remote = remote_url(&root);
+        if remote.is_empty() {
+            let next = status(&root, "idle", "本地更改已提交");
+            emit_status(&app, &next);
+            return Ok(SyncResult {
+                success: true,
+                status: next,
+            });
+        }
 
-    emit_status(&app, &status(&root, "fetching", "正在获取远程更改…"));
-    git(&root, &["fetch", "origin"])?;
-    let remote_ref = format!("origin/{}", config.branch);
-    if git(&root, &["rev-parse", "--verify", &remote_ref]).is_ok() {
-        let (_, behind) = ahead_behind(&root, &config.branch);
-        if behind > 0 {
-            emit_status(&app, &status(&root, "rebasing", "正在合并远程更改…"));
-            if let Err(error) = git(&root, &["rebase", &remote_ref]) {
-                let conflicts = conflict_files(&root);
-                let mut next = status(&root, "conflicted", "检测到同步冲突");
-                next.conflicts = conflicts;
-                next.message = error;
-                emit_status(&app, &next);
-                return Ok(SyncResult {
-                    success: false,
-                    status: next,
-                });
+        emit_status(&app, &status(&root, "fetching", "正在获取远程更改…"));
+        git(&root, &["fetch", "origin"])?;
+        let remote_ref = format!("origin/{}", config.branch);
+        if git(&root, &["rev-parse", "--verify", &remote_ref]).is_ok() {
+            let (_, behind) = ahead_behind(&root, &config.branch);
+            if behind > 0 {
+                emit_status(&app, &status(&root, "rebasing", "正在合并远程更改…"));
+                if let Err(error) = git(&root, &["rebase", &remote_ref]) {
+                    let conflicts = conflict_files(&root);
+                    let mut next = status(&root, "conflicted", "检测到同步冲突");
+                    next.conflicts = conflicts;
+                    next.message = error;
+                    emit_status(&app, &next);
+                    return Ok(SyncResult {
+                        success: false,
+                        status: next,
+                    });
+                }
             }
         }
-    }
 
-    emit_status(&app, &status(&root, "pushing", "正在上传本地更改…"));
-    git(&root, &["push", "--set-upstream", "origin", &config.branch])?;
-    let next = status(&root, "idle", "同步完成");
-    emit_status(&app, &next);
-    Ok(SyncResult {
-        success: true,
-        status: next,
+        emit_status(&app, &status(&root, "pushing", "正在上传本地更改…"));
+        git(&root, &["push", "--set-upstream", "origin", &config.branch])?;
+        let next = status(&root, "idle", "同步完成");
+        emit_status(&app, &next);
+        Ok(SyncResult {
+            success: true,
+            status: next,
+        })
     })
+    .await
 }
 
 #[tauri::command]

@@ -130,9 +130,11 @@ export function SourcesPage() {
       window.cancelAnimationFrame(frame)
       observer.disconnect()
       window.removeEventListener('resize', syncNativeView)
-      writeMiniappLog("miniapp_renderer_cleanup_hide", `viewKey=${viewKey}`)
-      void window.oneMind.miniappView.hide().catch((error: unknown) => {
-        writeMiniappLog("miniapp_renderer_cleanup_hide_failed", `viewKey=${viewKey} error=${String(error)}`)
+      writeMiniappLog("miniapp_renderer_cleanup_close", `viewKey=${viewKey}`)
+      // Only one source is visible in this route. Keeping every visited remote
+      // page hidden retains its browser process, timers, and network activity.
+      void window.oneMind.miniappView.close(viewKey).catch((error: unknown) => {
+        writeMiniappLog("miniapp_renderer_cleanup_close_failed", `viewKey=${viewKey} error=${String(error)}`)
       })
     }
   }, [activeSourceId, activeUrl, location.pathname])

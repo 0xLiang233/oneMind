@@ -671,16 +671,22 @@ fn scan_system_apps(app: &AppHandle) -> Vec<SystemAppEntry> {
 
 fn get_cached_system_apps(app: &AppHandle) -> Vec<SystemAppEntry> {
     let store = app.state::<SystemAppStore>();
-    if let Ok(mut cached_apps) = store.cached_apps.lock() {
+    if let Ok(cached_apps) = store.cached_apps.lock() {
         if let Some(apps) = cached_apps.as_ref() {
             return apps.clone();
         }
-        let apps = scan_system_apps(app);
-        *cached_apps = Some(apps.clone());
-        return apps;
     }
 
-    scan_system_apps(app)
+    // Shortcut resolution and icon extraction can be slow. Do not hold the cache lock
+    // while scanning, otherwise every subsequent search waits for the full scan.
+    let apps = scan_system_apps(app);
+    if let Ok(mut cached_apps) = store.cached_apps.lock() {
+        if let Some(existing) = cached_apps.as_ref() {
+            return existing.clone();
+        }
+        *cached_apps = Some(apps.clone());
+    }
+    apps
 }
 
 fn recent_rank_map(recents: &[SystemAppEntry]) -> std::collections::HashMap<String, usize> {
@@ -3222,7 +3228,8 @@ mod note_asset_tests {
         fs::create_dir_all(workspace.join("assets")).expect("create workspace assets");
         fs::write(workspace.join("assets/legacy.png"), b"legacy").expect("write legacy asset");
         fs::create_dir_all(workspace.join("notes/assets/note")).expect("create note assets");
-        fs::write(workspace.join("notes/assets/note/image.png"), b"image").expect("write note asset");
+        fs::write(workspace.join("notes/assets/note/image.png"), b"image")
+            .expect("write note asset");
         fs::write(workspace.join("notes/note.md"), "# Note\n").expect("write note");
 
         let nodes = notes_list(path_to_string(&workspace)).expect("list notes");
@@ -3709,12 +3716,19 @@ fn float_note_set_shortcut_enabled(app: AppHandle, enabled: bool) -> Result<bool
 }
 
 #[tauri::command]
-fn system_apps_search(
+async fn system_apps_search(
     app: AppHandle,
     workspace_path: String,
     query: String,
 ) -> Result<Vec<SystemAppEntry>, String> {
-    let apps = list_system_apps(&app, &workspace_path, &query);
+    let search_app = app.clone();
+    let search_workspace_path = workspace_path.clone();
+    let search_query = query.clone();
+    let apps = tauri::async_runtime::spawn_blocking(move || {
+        list_system_apps(&search_app, &search_workspace_path, &search_query)
+    })
+    .await
+    .map_err(|error| format!("系统应用搜索任务失败: {error}"))?;
     append_debug_log(
         &app,
         "system_apps_search",
