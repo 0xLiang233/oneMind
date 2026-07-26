@@ -3176,7 +3176,9 @@ button.sync-change-refresh:hover {
 .sync-check-result.has_history,
 .sync-check-result.error { color: var(--color-danger); }
 .sync-auth-box,
-.sync-auth-repair {
+.sync-auth-repair,
+.sync-import-box,
+.sync-conflict-recovery {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -3186,11 +3188,17 @@ button.sync-change-refresh:hover {
   background: var(--color-bg-overlay);
 }
 .sync-auth-box > div,
-.sync-auth-repair > div { min-width: 0; flex: 1; }
+.sync-auth-repair > div,
+.sync-import-box > div,
+.sync-conflict-recovery > div { min-width: 0; flex: 1; }
 .sync-auth-box strong,
-.sync-auth-repair strong { color: var(--color-text-primary); font-size: 12px; }
+.sync-auth-repair strong,
+.sync-import-box strong,
+.sync-conflict-recovery strong { color: var(--color-text-primary); font-size: 12px; }
 .sync-auth-box p,
-.sync-auth-repair p {
+.sync-auth-repair p,
+.sync-import-box p,
+.sync-conflict-recovery p {
   margin: 3px 0 0;
   color: var(--color-text-secondary);
   font-size: 12px;
@@ -3202,6 +3210,18 @@ button.sync-change-refresh:hover {
   color: var(--color-danger);
 }
 .sync-auth-repair > svg { flex: 0 0 18px; }
+.sync-import-box,
+.sync-conflict-recovery {
+  margin-top: 10px;
+}
+.sync-import-box {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 32%, var(--color-border-default));
+}
+.sync-conflict-recovery {
+  border-color: color-mix(in srgb, var(--color-danger) 32%, var(--color-border-default));
+  color: var(--color-danger);
+}
+.sync-conflict-recovery > svg { flex: 0 0 18px; }
 .sync-auth-repair-actions {
   display: flex;
   flex: 0 0 auto;
@@ -3229,7 +3249,7 @@ button.sync-change-refresh:hover {
   .sync-repository-fields { grid-template-columns: 1fr; }
   .sync-inline-form { grid-template-columns: 1fr; }
   .sync-remote-actions { align-items: stretch; flex-direction: column; }
-  .sync-auth-box, .sync-auth-repair { align-items: stretch; flex-direction: column; }
+  .sync-auth-box, .sync-auth-repair, .sync-import-box, .sync-conflict-recovery { align-items: stretch; flex-direction: column; }
   .sync-auth-repair-actions { flex-wrap: wrap; }
   .sync-settings-actions { flex-wrap: wrap; }
   .sync-settings-actions button { flex: 1 1 160px; }

@@ -13,6 +13,9 @@ type Props = {
   onTestRemote: (remoteUrl: string) => Promise<RemoteCheck | null>
   onListChanges: () => Promise<SyncChange[]>
   onAuthenticateGitHub: (username?: string) => Promise<AuthenticationResult | null>
+  onImportRemote: (config: SyncConfig) => Promise<SyncResult | null>
+  onContinueRebase: () => Promise<SyncResult | null>
+  onAbortRebase: () => Promise<SyncResult | null>
 }
 
 const intervals = [
@@ -25,7 +28,7 @@ const intervals = [
 
 const busyPhases = new Set<SyncPhase>(["initializing", "committing", "fetching", "rebasing", "pushing"])
 
-type LocalAction = "savingIdentity" | "testingRemote" | "openingAuth" | "initializing" | "savingRepository" | "savingPreferences" | "syncing"
+type LocalAction = "savingIdentity" | "testingRemote" | "openingAuth" | "initializing" | "importingRemote" | "continuingRebase" | "abortingRebase" | "savingRepository" | "savingPreferences" | "syncing"
 
 const phaseLabels: Partial<Record<SyncPhase, string>> = {
   initializing: "正在准备工作区",
@@ -40,6 +43,9 @@ const actionLabels: Record<LocalAction, string> = {
   testingRemote: "正在检查仓库和访问权限",
   openingAuth: "正在打开 GitHub 授权",
   initializing: "正在初始化同步配置",
+  importingRemote: "正在下载远程工作区",
+  continuingRebase: "正在继续处理同步冲突",
+  abortingRebase: "正在放弃远程合并",
   savingRepository: "正在保存仓库配置",
   savingPreferences: "正在保存同步偏好",
   syncing: "正在准备同步"
@@ -106,7 +112,10 @@ export function SyncSettingsPanel({
   onSaveIdentity,
   onTestRemote,
   onListChanges,
-  onAuthenticateGitHub
+  onAuthenticateGitHub,
+  onImportRemote,
+  onContinueRebase,
+  onAbortRebase
 }: Props) {
   const [draft, setDraft] = useState(config)
   const [sourceConfig, setSourceConfig] = useState(config)
@@ -123,7 +132,7 @@ export function SyncSettingsPanel({
   const [changesLoading, setChangesLoading] = useState(false)
   const [changesError, setChangesError] = useState("")
   const [changeFilter, setChangeFilter] = useState<"all" | SyncChangeKind>("all")
-  const saving = localAction === "savingIdentity" || localAction === "initializing" || localAction === "savingRepository" || localAction === "savingPreferences"
+  const saving = localAction === "savingIdentity" || localAction === "initializing" || localAction === "importingRemote" || localAction === "savingRepository" || localAction === "savingPreferences"
   const checkingRemote = localAction === "testingRemote"
   const authenticating = localAction === "openingAuth"
   const syncing = localAction === "syncing" || busyPhases.has(status.phase)
@@ -217,6 +226,24 @@ export function SyncSettingsPanel({
     }
   }
 
+  async function importRemote() {
+    if (remoteCheck?.state !== "has_history") return
+    const next = { ...draft, enabled: true }
+    const accepted = window.confirm("将下载远程仓库内容到当前空工作区。本地笔记不会被覆盖；检测到本地内容时操作会停止。继续吗？")
+    if (!accepted) return
+    setDraft(next)
+    setLocalAction("importingRemote")
+    setFormError("")
+    try {
+      await onImportRemote(next)
+      setRemoteCheck(null)
+    } catch (nextError) {
+      setFormError(String(nextError))
+    } finally {
+      setLocalAction(null)
+    }
+  }
+
   async function authenticateGitHub() {
     setLocalAction("openingAuth")
     setFormError("")
@@ -227,6 +254,32 @@ export function SyncSettingsPanel({
       if (!result?.success) return
       setAuthStarted(true)
       setAuthMessage(result.message)
+    } catch (nextError) {
+      setFormError(String(nextError))
+    } finally {
+      setLocalAction(null)
+    }
+  }
+
+  async function continueRebase() {
+    setLocalAction("continuingRebase")
+    setFormError("")
+    try {
+      await onContinueRebase()
+    } catch (nextError) {
+      setFormError(String(nextError))
+    } finally {
+      setLocalAction(null)
+    }
+  }
+
+  async function abortRebase() {
+    const accepted = window.confirm("将放弃本次从远程仓库拉取的合并，本地提交会保留。继续吗？")
+    if (!accepted) return
+    setLocalAction("abortingRebase")
+    setFormError("")
+    try {
+      await onAbortRebase()
     } catch (nextError) {
       setFormError(String(nextError))
     } finally {
@@ -278,6 +331,7 @@ export function SyncSettingsPanel({
   const authenticationRequired = /\b403\b|write access to repository not granted|authentication failed|permission denied/i.test(error || status.message)
   const authenticationReady = !githubHttps || authStarted || (!needsSetup && !authenticationRequired)
   const canCompleteSetup = setupReady && authenticationReady
+  const remoteHasHistory = remoteCheck?.success === true && remoteCheck.state === "has_history"
   const operationLabel = localAction ? actionLabels[localAction] : phaseLabels[status.phase] || ""
 
   return (
@@ -391,14 +445,25 @@ export function SyncSettingsPanel({
                     <span>{remoteCheck.message}</span>
                   </div>
                 ) : null}
-                {githubHttps && remoteReady ? (
+                {githubHttps ? (
                   <div className="sync-auth-box">
                     <div>
-                      <strong>{authStarted ? "等待完成网页授权" : "登录 GitHub"}</strong>
-                      <p>{authMessage || "通过浏览器授权 Git Credential Manager 写入这个私有仓库。OneMind 不会读取或保存 token。"}</p>
+                      <strong>{authStarted ? "完成授权后重新检查" : "登录 GitHub"}</strong>
+                      <p>{authMessage || "通过浏览器授权 Git Credential Manager 写入这个仓库。OneMind 不会读取或保存 token。"}</p>
                     </div>
-                    <button type="button" className="secondary compact" disabled={authenticating} onClick={() => void authenticateGitHub()}>
-                      {authenticating ? <LoadingLabel label="正在打开" /> : authStarted ? "重新打开授权" : "登录 GitHub"}
+                    <button type="button" className="secondary compact" disabled={authenticating || (authStarted && checkingRemote)} onClick={() => void (authStarted ? testRemote() : authenticateGitHub())}>
+                      {authenticating ? <LoadingLabel label="正在打开" /> : authStarted ? "完成授权，重新检查" : "登录 GitHub"}
+                    </button>
+                  </div>
+                ) : null}
+                {remoteHasHistory ? (
+                  <div className="sync-import-box">
+                    <div>
+                      <strong>下载已有远程工作区</strong>
+                      <p>仅适用于没有本地笔记的工作区。检测到本地文件或提交时会停止，不会覆盖数据。</p>
+                    </div>
+                    <button type="button" className="compact" disabled={isBusy || !preflight.identityConfigured} onClick={() => void importRemote()}>
+                      {localAction === "importingRemote" ? <LoadingLabel label="正在下载" /> : "下载远程内容"}
                     </button>
                   </div>
                 ) : null}
@@ -494,6 +559,20 @@ export function SyncSettingsPanel({
                 </div>
               )}
             </section>
+          ) : null}
+
+          {status.phase === "conflicted" ? (
+            <div className="sync-conflict-recovery" role="status">
+              <AlertTriangle size={18} aria-hidden="true" />
+              <div>
+                <strong>同步需要手动合并</strong>
+                <p>请在冲突文件中处理冲突标记并保存。{status.conflicts.length > 0 ? `当前有 ${status.conflicts.length} 个冲突文件。` : ""}</p>
+              </div>
+              <div className="sync-auth-repair-actions">
+                <button type="button" className="secondary compact" disabled={isBusy} onClick={() => void abortRebase()}>{localAction === "abortingRebase" ? <LoadingLabel label="正在放弃" /> : "放弃本次合并"}</button>
+                <button type="button" className="compact" disabled={isBusy} onClick={() => void continueRebase()}>{localAction === "continuingRebase" ? <LoadingLabel label="正在继续" /> : "已解决，继续同步"}</button>
+              </div>
+            </div>
           ) : null}
 
           <div className="sync-connection-summary">

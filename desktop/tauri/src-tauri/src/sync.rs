@@ -182,6 +182,15 @@ fn git_output(root: &Path, args: &[&str]) -> Result<Output, String> {
         .map_err(|error| format!("无法运行 Git: {error}"))
 }
 
+fn git_output_with_editor(root: &Path, args: &[&str]) -> Result<Output, String> {
+    git_command()
+        .args(args)
+        .env("GIT_EDITOR", "true")
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("无法运行 Git: {error}"))
+}
+
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = git_output(root, args)?;
     if output.status.success() {
@@ -233,20 +242,42 @@ fn classify_remote_error(message: &str) -> (&'static str, &'static str) {
         || lower.contains("could not read username")
         || lower.contains("terminal prompts disabled")
         || lower.contains("publickey")
+        || lower.contains("http 401")
+        || lower.contains("http 403")
+        || lower.contains("error: 401")
+        || lower.contains("error: 403")
+        || lower.contains("access denied")
     {
-        return ("authentication_required", "远程仓库需要登录，或当前账号没有访问权限。");
+        return (
+            "authentication_required",
+            "远程仓库需要登录，或当前账号没有访问权限。",
+        );
     }
     if lower.contains("repository not found") || lower.contains("not found") {
-        return ("repository_not_found", "没有找到远程仓库，请检查地址和仓库权限。");
+        return (
+            "repository_not_found",
+            "没有找到远程仓库，请检查地址和仓库权限。",
+        );
     }
     if lower.contains("could not resolve host")
         || lower.contains("failed to connect")
         || lower.contains("network")
         || lower.contains("timed out")
     {
-        return ("network_unavailable", "无法连接远程服务，请检查网络后重试。");
+        return (
+            "network_unavailable",
+            "无法连接远程服务，请检查网络后重试。",
+        );
     }
-    ("unreachable", "无法访问远程仓库，请检查地址、登录状态和权限。")
+    (
+        "unreachable",
+        "无法访问远程仓库，请检查地址、登录状态和权限。",
+    )
+}
+
+fn rebase_in_progress(root: &Path) -> bool {
+    let git_dir = root.join(".git");
+    git_dir.join("rebase-apply").is_dir() || git_dir.join("rebase-merge").is_dir()
 }
 
 fn is_repository(root: &Path) -> bool {
@@ -283,6 +314,41 @@ fn ensure_gitignore(root: &Path) -> Result<(), String> {
         fs::write(ignore_path, next).map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+fn is_generated_gitignore(root: &Path) -> bool {
+    let ignore_path = root.join(".gitignore");
+    let Ok(existing) = fs::read_to_string(ignore_path) else {
+        return false;
+    };
+    let allowed = [
+        ".onemind/logs/",
+        ".onemind/cache/",
+        ".onemind/snapshots/",
+        ".onemind/settings.json",
+        ".onemind/sync.json",
+        ".onemind/activity/",
+    ];
+    existing
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .all(|line| allowed.contains(&line))
+}
+
+fn workspace_user_content(root: &Path) -> Result<Option<String>, String> {
+    for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == ".git" || name == ".onemind" {
+            continue;
+        }
+        if name == ".gitignore" && is_generated_gitignore(root) {
+            continue;
+        }
+        return Ok(Some(name));
+    }
+    Ok(None)
 }
 
 fn count_changes(root: &Path) -> u32 {
@@ -432,11 +498,13 @@ fn status(root: &Path, phase: &str, message: impl Into<String>) -> SyncStatus {
     } else {
         (0, 0)
     };
+    let rebase_pending = repository_initialized && rebase_in_progress(root);
+    let message = message.into();
     SyncStatus {
         available: git_available(),
         configured: repository_initialized && !remote_url(root).is_empty(),
         repository_initialized,
-        phase: phase.to_string(),
+        phase: if rebase_pending { "conflicted" } else { phase }.to_string(),
         branch,
         remote_url: if repository_initialized {
             remote_url(root)
@@ -455,7 +523,11 @@ fn status(root: &Path, phase: &str, message: impl Into<String>) -> SyncStatus {
         } else {
             Vec::new()
         },
-        message: message.into(),
+        message: if rebase_pending {
+            "请解决冲突文件后继续合并，或放弃本次远程合并。".to_string()
+        } else {
+            message
+        },
     }
 }
 
@@ -561,7 +633,10 @@ pub fn sync_write_identity(
     if identity.name.is_empty() {
         return Err("请填写提交者名称。".to_string());
     }
-    if !identity.email.contains('@') || identity.email.starts_with('@') || identity.email.ends_with('@') {
+    if !identity.email.contains('@')
+        || identity.email.starts_with('@')
+        || identity.email.ends_with('@')
+    {
         return Err("请填写有效的提交者邮箱。".to_string());
     }
     if !is_repository(&root) {
@@ -575,10 +650,7 @@ pub fn sync_write_identity(
 }
 
 #[tauri::command]
-pub fn sync_test_remote(
-    workspace_path: String,
-    remote_url: String,
-) -> Result<RemoteCheck, String> {
+pub fn sync_test_remote(workspace_path: String, remote_url: String) -> Result<RemoteCheck, String> {
     let root = workspace_root(&workspace_path)?;
     let remote_url = remote_url.trim().to_string();
     if remote_url.is_empty() {
@@ -631,9 +703,18 @@ pub fn sync_authenticate_github(
 
     let mut command = git_command();
     command
-        .args(["credential-manager", "github", "login", "--browser", "--force"])
+        .args([
+            "credential-manager",
+            "github",
+            "login",
+            "--browser",
+            "--force",
+        ])
         .current_dir(&root);
-    if let Some(value) = username.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()) {
+    if let Some(value) = username
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
         command.args(["--username", &value]);
     }
     command.stdout(Stdio::null()).stderr(Stdio::null());
@@ -643,6 +724,68 @@ pub fn sync_authenticate_github(
     Ok(AuthenticationResult {
         success: true,
         message: "浏览器授权已启动。完成网页授权后，返回 OneMind 验证写入权限。".to_string(),
+    })
+}
+
+#[tauri::command]
+pub fn sync_import_remote(
+    app: AppHandle,
+    state: State<'_, SyncState>,
+    workspace_path: String,
+    mut config: SyncConfig,
+) -> Result<SyncResult, String> {
+    let _guard = state
+        .operation
+        .try_lock()
+        .map_err(|_| "另一个同步操作正在进行。".to_string())?;
+    let root = workspace_root(&workspace_path)?;
+    if !git_available() {
+        return Err("未检测到 Git，请先安装 Git 并重新启动 OneMind。".to_string());
+    }
+
+    config.branch = config.branch.trim().to_string();
+    config.remote_url = config.remote_url.trim().to_string();
+    if config.branch.is_empty() {
+        config.branch = default_branch();
+    }
+    validate_config(&config)?;
+    if config.remote_url.is_empty() {
+        return Err("请填写远程仓库地址。".to_string());
+    }
+    if let Some(path) = workspace_user_content(&root)? {
+        return Err(format!(
+            "当前工作区包含本地内容“{path}”，为避免覆盖数据，不能下载远程工作区。请在新的空工作区中接入远程仓库。"
+        ));
+    }
+    if is_repository(&root) && git(&root, &["rev-parse", "--verify", "HEAD"]).is_ok() {
+        return Err(
+            "当前工作区已有本地提交，不能下载远程工作区。请在新的空工作区中接入远程仓库。"
+                .to_string(),
+        );
+    }
+
+    emit_status(&app, &status(&root, "initializing", "正在下载远程工作区…"));
+    if !is_repository(&root) {
+        git(&root, &["init", "-b", &config.branch])?;
+    }
+    set_remote(&root, &config.remote_url)?;
+    git(&root, &["fetch", "--no-tags", "origin", &config.branch])?;
+    let remote_ref = format!("origin/{}", config.branch);
+    if git(&root, &["rev-parse", "--verify", &remote_ref]).is_err() {
+        return Err(format!("远程仓库不存在分支 {}。", config.branch));
+    }
+    git(
+        &root,
+        &["checkout", "-B", &config.branch, "--track", &remote_ref],
+    )?;
+    ensure_gitignore(&root)?;
+    config.enabled = true;
+    write_config(&root, &config)?;
+    let next = status(&root, "idle", "已下载远程工作区，可以开始同步");
+    emit_status(&app, &next);
+    Ok(SyncResult {
+        success: true,
+        status: next,
     })
 }
 
@@ -703,6 +846,14 @@ pub fn sync_run(
     if !is_repository(&root) {
         return Err("当前工作区尚未初始化同步。".to_string());
     }
+    if rebase_in_progress(&root) {
+        let next = status(&root, "conflicted", "请先处理同步冲突。".to_string());
+        emit_status(&app, &next);
+        return Ok(SyncResult {
+            success: false,
+            status: next,
+        });
+    }
     let config = read_config(&root);
     ensure_gitignore(&root)?;
 
@@ -736,7 +887,6 @@ pub fn sync_run(
             emit_status(&app, &status(&root, "rebasing", "正在合并远程更改…"));
             if let Err(error) = git(&root, &["rebase", &remote_ref]) {
                 let conflicts = conflict_files(&root);
-                let _ = git(&root, &["rebase", "--abort"]);
                 let mut next = status(&root, "conflicted", "检测到同步冲突");
                 next.conflicts = conflicts;
                 next.message = error;
@@ -752,6 +902,72 @@ pub fn sync_run(
     emit_status(&app, &status(&root, "pushing", "正在上传本地更改…"));
     git(&root, &["push", "--set-upstream", "origin", &config.branch])?;
     let next = status(&root, "idle", "同步完成");
+    emit_status(&app, &next);
+    Ok(SyncResult {
+        success: true,
+        status: next,
+    })
+}
+
+#[tauri::command]
+pub fn sync_continue_rebase(
+    app: AppHandle,
+    state: State<'_, SyncState>,
+    workspace_path: String,
+) -> Result<SyncResult, String> {
+    let _guard = state
+        .operation
+        .try_lock()
+        .map_err(|_| "另一个同步操作正在进行。".to_string())?;
+    let root = workspace_root(&workspace_path)?;
+    if !is_repository(&root) || !rebase_in_progress(&root) {
+        return Err("当前没有待继续的同步冲突。".to_string());
+    }
+
+    emit_status(&app, &status(&root, "rebasing", "正在继续合并远程更改…"));
+    git(&root, &["add", "-A", "--", "."])?;
+    let output = git_output_with_editor(&root, &["rebase", "--continue"])?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let mut next = status(&root, "conflicted", "仍有同步冲突需要处理");
+        next.conflicts = conflict_files(&root);
+        if !detail.is_empty() {
+            next.message = detail;
+        }
+        emit_status(&app, &next);
+        return Ok(SyncResult {
+            success: false,
+            status: next,
+        });
+    }
+
+    let config = read_config(&root);
+    emit_status(&app, &status(&root, "pushing", "正在上传已合并的更改…"));
+    git(&root, &["push", "--set-upstream", "origin", &config.branch])?;
+    let next = status(&root, "idle", "冲突已解决并完成同步");
+    emit_status(&app, &next);
+    Ok(SyncResult {
+        success: true,
+        status: next,
+    })
+}
+
+#[tauri::command]
+pub fn sync_abort_rebase(
+    app: AppHandle,
+    state: State<'_, SyncState>,
+    workspace_path: String,
+) -> Result<SyncResult, String> {
+    let _guard = state
+        .operation
+        .try_lock()
+        .map_err(|_| "另一个同步操作正在进行。".to_string())?;
+    let root = workspace_root(&workspace_path)?;
+    if !is_repository(&root) || !rebase_in_progress(&root) {
+        return Err("当前没有待放弃的同步冲突。".to_string());
+    }
+    git(&root, &["rebase", "--abort"])?;
+    let next = status(&root, "idle", "已放弃本次远程合并，本地更改仍然保留");
     emit_status(&app, &next);
     Ok(SyncResult {
         success: true,

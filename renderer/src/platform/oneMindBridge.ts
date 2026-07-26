@@ -190,8 +190,11 @@ export function installOneMindBridgeFallback() {
         remoteUrl
       }),
       authenticateGitHub: () => unsupported<AuthenticationResult>("sync.authenticateGitHub"),
+      importRemote: () => unsupported<SyncResult>("sync.importRemote"),
       initialize: () => unsupported<SyncResult>("sync.initialize"),
       run: () => unsupported<SyncResult>("sync.run"),
+      continueRebase: () => unsupported<SyncResult>("sync.continueRebase"),
+      abortRebase: () => unsupported<SyncResult>("sync.abortRebase"),
       onStatusChanged: () => () => undefined
     }
   }

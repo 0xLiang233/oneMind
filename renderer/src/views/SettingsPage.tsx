@@ -23,7 +23,10 @@ type OutletContext = {
     testRemote: (remoteUrl: string) => Promise<RemoteCheck | null>
     listChanges: () => Promise<SyncChange[]>
     authenticateGitHub: (username?: string) => Promise<AuthenticationResult | null>
+    importRemote: (config: SyncConfig) => Promise<SyncResult | null>
     initialize: (config: SyncConfig) => Promise<SyncResult | null>
+    continueRebase: () => Promise<SyncResult | null>
+    abortRebase: () => Promise<SyncResult | null>
   }
 }
 
@@ -689,6 +692,9 @@ export function SettingsPage() {
                 onTestRemote={workspaceSync.testRemote}
                 onListChanges={workspaceSync.listChanges}
                 onAuthenticateGitHub={workspaceSync.authenticateGitHub}
+                onImportRemote={workspaceSync.importRemote}
+                onContinueRebase={workspaceSync.continueRebase}
+                onAbortRebase={workspaceSync.abortRebase}
               />
             ) : (
               <div className="settings-empty">创建或选择工作区后即可配置同步。</div>

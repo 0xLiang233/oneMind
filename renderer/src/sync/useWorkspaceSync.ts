@@ -102,6 +102,47 @@ export function useWorkspaceSync(workspacePath: string, onWorkspaceChanged: () =
     }
   }, [workspacePath])
 
+  const importRemote = useCallback(async (nextConfig: SyncConfig) => {
+    if (!workspacePath || runningRef.current) return null
+    runningRef.current = true
+    setError("")
+    try {
+      await flushBeforeSync()
+      const result = await window.oneMind.sync.importRemote(workspacePath, nextConfig)
+      setConfig(nextConfig)
+      setStatus(result.status)
+      await onWorkspaceChanged()
+      window.dispatchEvent(new CustomEvent("onemind-workspace-changed"))
+      return result
+    } catch (nextError) {
+      setError(String(nextError))
+      setStatus((current) => ({ ...current, phase: "error", message: String(nextError) }))
+      return null
+    } finally {
+      runningRef.current = false
+    }
+  }, [onWorkspaceChanged, workspacePath])
+
+  const resolveRebase = useCallback(async (operation: "continueRebase" | "abortRebase") => {
+    if (!workspacePath || runningRef.current) return null
+    runningRef.current = true
+    setError("")
+    try {
+      await flushBeforeSync()
+      const result = await window.oneMind.sync[operation](workspacePath)
+      setStatus(result.status)
+      await onWorkspaceChanged()
+      window.dispatchEvent(new CustomEvent("onemind-workspace-changed"))
+      return result
+    } catch (nextError) {
+      setError(String(nextError))
+      setStatus((current) => ({ ...current, phase: "error", message: String(nextError) }))
+      return null
+    } finally {
+      runningRef.current = false
+    }
+  }, [onWorkspaceChanged, workspacePath])
+
   useEffect(() => {
     if (!workspacePath) {
       setConfig(defaultSyncConfig)
@@ -163,5 +204,8 @@ export function useWorkspaceSync(workspacePath: string, onWorkspaceChanged: () =
     }
   }, [workspacePath])
 
-  return { config, status, preflight, error, refresh, run, saveConfig, saveIdentity, testRemote, listChanges, authenticateGitHub, initialize }
+  const continueRebase = useCallback(() => resolveRebase("continueRebase"), [resolveRebase])
+  const abortRebase = useCallback(() => resolveRebase("abortRebase"), [resolveRebase])
+
+  return { config, status, preflight, error, refresh, run, saveConfig, saveIdentity, testRemote, listChanges, authenticateGitHub, initialize, importRemote, continueRebase, abortRebase }
 }

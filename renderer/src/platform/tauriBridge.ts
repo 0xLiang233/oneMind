@@ -185,8 +185,11 @@ export function createTauriBridge(): Window["oneMind"] {
         invoke<RemoteCheck>("sync_test_remote", { workspacePath, remoteUrl }),
       authenticateGitHub: (workspacePath, username) =>
         invoke<AuthenticationResult>("sync_authenticate_github", { workspacePath, username }),
+      importRemote: (workspacePath, config) => invoke<SyncResult>("sync_import_remote", { workspacePath, config }),
       initialize: (workspacePath, config) => invoke<SyncResult>("sync_initialize", { workspacePath, config }),
       run: (workspacePath) => invoke<SyncResult>("sync_run", { workspacePath }),
+      continueRebase: (workspacePath) => invoke<SyncResult>("sync_continue_rebase", { workspacePath }),
+      abortRebase: (workspacePath) => invoke<SyncResult>("sync_abort_rebase", { workspacePath }),
       onStatusChanged: (callback) => {
         let disposed = false
         let unlisten: (() => void) | null = null
