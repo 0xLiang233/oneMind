@@ -336,6 +336,17 @@ fn is_generated_gitignore(root: &Path) -> bool {
         .all(|line| allowed.contains(&line))
 }
 
+fn is_empty_generated_workspace_directory(root: &Path, name: &str) -> Result<bool, String> {
+    let path = root.join(name);
+    if !path.is_dir() {
+        return Ok(false);
+    }
+    Ok(fs::read_dir(path)
+        .map_err(|error| error.to_string())?
+        .next()
+        .is_none())
+}
+
 fn workspace_user_content(root: &Path) -> Result<Option<String>, String> {
     for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
@@ -344,6 +355,11 @@ fn workspace_user_content(root: &Path) -> Result<Option<String>, String> {
             continue;
         }
         if name == ".gitignore" && is_generated_gitignore(root) {
+            continue;
+        }
+        if ["notes", "assets", "inbox", "sources"].contains(&name.as_str())
+            && is_empty_generated_workspace_directory(root, &name)?
+        {
             continue;
         }
         return Ok(Some(name));
@@ -977,7 +993,11 @@ pub fn sync_abort_rebase(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_status_changes, SyncChange};
+    use super::{parse_status_changes, workspace_user_content, SyncChange};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn change(kind: &str, path: &str, previous_path: Option<&str>) -> SyncChange {
         SyncChange {
@@ -1044,5 +1064,26 @@ mod tests {
     fn rejects_rename_without_previous_path() {
         let raw = b"2 R. N... 100644 100644 100644 aaaaaaa bbbbbbb R100 notes/new.md\0";
         assert!(parse_status_changes(raw).is_err());
+    }
+
+    #[test]
+    fn accepts_empty_generated_workspace_directories_for_remote_import() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("onemind-sync-{suffix}"));
+        for name in ["notes", "assets", "inbox", "sources", ".onemind"] {
+            fs::create_dir_all(root.join(name)).unwrap();
+        }
+
+        assert_eq!(workspace_user_content(&root).unwrap(), None);
+        fs::write(root.join("assets/image.png"), b"image").unwrap();
+        assert_eq!(
+            workspace_user_content(&root).unwrap(),
+            Some("assets".to_string())
+        );
+
+        fs::remove_dir_all(root).unwrap();
     }
 }
