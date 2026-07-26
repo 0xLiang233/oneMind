@@ -14,6 +14,7 @@ type Props = {
   onListChanges: () => Promise<SyncChange[]>
   onAuthenticateGitHub: (username?: string) => Promise<AuthenticationResult | null>
   onImportRemote: (config: SyncConfig, overwriteLocalConfig?: boolean) => Promise<SyncResult | null>
+  onResolveConflicts: (resolutions: SyncConflictResolution[]) => Promise<SyncResult | null>
   onContinueRebase: () => Promise<SyncResult | null>
   onAbortRebase: () => Promise<SyncResult | null>
 }
@@ -28,7 +29,7 @@ const intervals = [
 
 const busyPhases = new Set<SyncPhase>(["initializing", "committing", "fetching", "rebasing", "pushing"])
 
-type LocalAction = "savingIdentity" | "testingRemote" | "openingAuth" | "initializing" | "importingRemote" | "continuingRebase" | "abortingRebase" | "savingRepository" | "savingPreferences" | "syncing"
+type LocalAction = "savingIdentity" | "testingRemote" | "openingAuth" | "initializing" | "importingRemote" | "resolvingConflict" | "continuingRebase" | "abortingRebase" | "savingRepository" | "savingPreferences" | "syncing"
 
 const phaseLabels: Partial<Record<SyncPhase, string>> = {
   initializing: "正在准备工作区",
@@ -44,6 +45,7 @@ const actionLabels: Record<LocalAction, string> = {
   openingAuth: "正在打开 GitHub 授权",
   initializing: "正在初始化同步配置",
   importingRemote: "正在下载远程工作区",
+  resolvingConflict: "正在保存冲突处理",
   continuingRebase: "正在继续处理同步冲突",
   abortingRebase: "正在放弃远程合并",
   savingRepository: "正在保存仓库配置",
@@ -114,6 +116,7 @@ export function SyncSettingsPanel({
   onListChanges,
   onAuthenticateGitHub,
   onImportRemote,
+  onResolveConflicts,
   onContinueRebase,
   onAbortRebase
 }: Props) {
@@ -274,6 +277,22 @@ export function SyncSettingsPanel({
     setFormError("")
     try {
       await onContinueRebase()
+    } catch (nextError) {
+      setFormError(String(nextError))
+    } finally {
+      setLocalAction(null)
+    }
+  }
+
+  async function resolveConflict(path: string, version: SyncConflictVersion) {
+    const label = version === "local" ? "本机版本" : "远程版本"
+    const accepted = window.confirm(`将使用${label}替换“${path}”的冲突内容。继续同步前仍可选择其他版本。继续吗？`)
+    if (!accepted) return
+    setLocalAction("resolvingConflict")
+    setFormError("")
+    try {
+      await onResolveConflicts([{ path, version }])
+      await loadChanges()
     } catch (nextError) {
       setFormError(String(nextError))
     } finally {
@@ -578,6 +597,12 @@ export function SyncSettingsPanel({
                             <span>{change.previousPath ? change.path : path.directory}</span>
                           </div>
                         </div>
+                        {change.kind === "conflicted" ? (
+                          <div className="sync-conflict-version-actions">
+                            <button type="button" className="secondary compact" disabled={isBusy} onClick={() => void resolveConflict(change.path, "local")}>使用本机版本</button>
+                            <button type="button" className="compact" disabled={isBusy} onClick={() => void resolveConflict(change.path, "remote")}>使用远程版本</button>
+                          </div>
+                        ) : null}
                       </div>
                     )
                   })}
@@ -591,11 +616,11 @@ export function SyncSettingsPanel({
               <AlertTriangle size={18} aria-hidden="true" />
               <div>
                 <strong>同步需要手动合并</strong>
-                <p>请在冲突文件中处理冲突标记并保存。{status.conflicts.length > 0 ? `当前有 ${status.conflicts.length} 个冲突文件。` : ""}</p>
+                <p>请为每个冲突文件选择本机或远程版本。{status.conflicts.length > 0 ? `当前有 ${status.conflicts.length} 个冲突文件。` : ""}全部处理后，再继续同步。</p>
               </div>
               <div className="sync-auth-repair-actions">
                 <button type="button" className="secondary compact" disabled={isBusy} onClick={() => void abortRebase()}>{localAction === "abortingRebase" ? <LoadingLabel label="正在放弃" /> : "放弃本次合并"}</button>
-                <button type="button" className="compact" disabled={isBusy} onClick={() => void continueRebase()}>{localAction === "continuingRebase" ? <LoadingLabel label="正在继续" /> : "已解决，继续同步"}</button>
+                <button type="button" className="compact" disabled={isBusy || status.conflicts.length > 0} onClick={() => void continueRebase()}>{localAction === "continuingRebase" ? <LoadingLabel label="正在继续" /> : "已解决，继续同步"}</button>
               </div>
             </div>
           ) : null}

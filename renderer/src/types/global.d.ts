@@ -119,6 +119,13 @@ type SyncChange = {
   previousPath?: string
 }
 
+type SyncConflictVersion = 'local' | 'remote'
+
+type SyncConflictResolution = {
+  path: string
+  version: SyncConflictVersion
+}
+
 type SyncResult = {
   success: boolean
   status: SyncStatus
@@ -320,6 +327,7 @@ interface Window {
       importRemote: (workspacePath: string, config: SyncConfig, overwriteLocalConfig?: boolean) => Promise<SyncResult>
       initialize: (workspacePath: string, config: SyncConfig) => Promise<SyncResult>
       run: (workspacePath: string) => Promise<SyncResult>
+      resolveConflicts: (workspacePath: string, resolutions: SyncConflictResolution[]) => Promise<SyncResult>
       continueRebase: (workspacePath: string) => Promise<SyncResult>
       abortRebase: (workspacePath: string) => Promise<SyncResult>
       onStatusChanged: (callback: (status: SyncStatus) => void) => () => void

@@ -189,6 +189,8 @@ export function createTauriBridge(): Window["oneMind"] {
         invoke<SyncResult>("sync_import_remote", { workspacePath, config, overwriteLocalConfig }),
       initialize: (workspacePath, config) => invoke<SyncResult>("sync_initialize", { workspacePath, config }),
       run: (workspacePath) => invoke<SyncResult>("sync_run", { workspacePath }),
+      resolveConflicts: (workspacePath, resolutions) =>
+        invoke<SyncResult>("sync_resolve_conflicts", { workspacePath, resolutions }),
       continueRebase: (workspacePath) => invoke<SyncResult>("sync_continue_rebase", { workspacePath }),
       abortRebase: (workspacePath) => invoke<SyncResult>("sync_abort_rebase", { workspacePath }),
       onStatusChanged: (callback) => {

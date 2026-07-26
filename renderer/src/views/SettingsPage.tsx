@@ -23,8 +23,9 @@ type OutletContext = {
     testRemote: (remoteUrl: string) => Promise<RemoteCheck | null>
     listChanges: () => Promise<SyncChange[]>
     authenticateGitHub: (username?: string) => Promise<AuthenticationResult | null>
-    importRemote: (config: SyncConfig) => Promise<SyncResult | null>
+    importRemote: (config: SyncConfig, overwriteLocalConfig?: boolean) => Promise<SyncResult | null>
     initialize: (config: SyncConfig) => Promise<SyncResult | null>
+    resolveConflicts: (resolutions: SyncConflictResolution[]) => Promise<SyncResult | null>
     continueRebase: () => Promise<SyncResult | null>
     abortRebase: () => Promise<SyncResult | null>
   }
@@ -693,6 +694,7 @@ export function SettingsPage() {
                 onListChanges={workspaceSync.listChanges}
                 onAuthenticateGitHub={workspaceSync.authenticateGitHub}
                 onImportRemote={workspaceSync.importRemote}
+                onResolveConflicts={workspaceSync.resolveConflicts}
                 onContinueRebase={workspaceSync.continueRebase}
                 onAbortRebase={workspaceSync.abortRebase}
               />

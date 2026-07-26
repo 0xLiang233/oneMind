@@ -3000,6 +3000,12 @@ button.sync-change-refresh:hover {
   flex: 0 0 auto;
   color: var(--color-border-strong);
 }
+.sync-conflict-version-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-2);
+}
+.sync-conflict-version-actions .compact { white-space: nowrap; }
 .sync-change-message {
   min-height: 72px;
   padding: var(--space-4);
@@ -3254,6 +3260,8 @@ button.sync-change-refresh:hover {
   .sync-change-filters { width: 100%; }
   .sync-repository-fields { grid-template-columns: 1fr; }
   .sync-inline-form { grid-template-columns: 1fr; }
+  .sync-change-item.conflicted { grid-template-columns: 28px minmax(0, 1fr); }
+  .sync-conflict-version-actions { grid-column: 2; flex-wrap: wrap; }
   .sync-remote-actions { align-items: stretch; flex-direction: column; }
   .sync-auth-box, .sync-auth-repair, .sync-import-box, .sync-conflict-recovery { align-items: stretch; flex-direction: column; }
   .sync-auth-repair-actions { flex-wrap: wrap; }

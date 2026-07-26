@@ -4096,6 +4096,7 @@ pub fn run() {
             sync::sync_import_remote,
             sync::sync_initialize,
             sync::sync_run,
+            sync::sync_resolve_conflicts,
             sync::sync_continue_rebase,
             sync::sync_abort_rebase,
             workspace_get_default_path,

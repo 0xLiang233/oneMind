@@ -143,6 +143,23 @@ export function useWorkspaceSync(workspacePath: string, onWorkspaceChanged: () =
     }
   }, [onWorkspaceChanged, workspacePath])
 
+  const resolveConflicts = useCallback(async (resolutions: SyncConflictResolution[]) => {
+    if (!workspacePath || runningRef.current) return null
+    runningRef.current = true
+    setError("")
+    try {
+      const result = await window.oneMind.sync.resolveConflicts(workspacePath, resolutions)
+      setStatus(result.status)
+      return result
+    } catch (nextError) {
+      setError(String(nextError))
+      setStatus((current) => ({ ...current, phase: "conflicted", message: String(nextError) }))
+      return null
+    } finally {
+      runningRef.current = false
+    }
+  }, [workspacePath])
+
   useEffect(() => {
     if (!workspacePath) {
       setConfig(defaultSyncConfig)
@@ -207,5 +224,5 @@ export function useWorkspaceSync(workspacePath: string, onWorkspaceChanged: () =
   const continueRebase = useCallback(() => resolveRebase("continueRebase"), [resolveRebase])
   const abortRebase = useCallback(() => resolveRebase("abortRebase"), [resolveRebase])
 
-  return { config, status, preflight, error, refresh, run, saveConfig, saveIdentity, testRemote, listChanges, authenticateGitHub, initialize, importRemote, continueRebase, abortRebase }
+  return { config, status, preflight, error, refresh, run, saveConfig, saveIdentity, testRemote, listChanges, authenticateGitHub, initialize, importRemote, resolveConflicts, continueRebase, abortRebase }
 }

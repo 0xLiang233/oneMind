@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
@@ -83,6 +84,20 @@ pub struct SyncChange {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_path: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncConflictResolution {
+    pub path: String,
+    pub version: ConflictVersion,
+}
+
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ConflictVersion {
+    Local,
+    Remote,
 }
 
 #[derive(Clone, Serialize)]
@@ -511,6 +526,22 @@ fn conflict_files(root: &Path) -> Vec<String> {
     git(root, &["diff", "--name-only", "--diff-filter=U"])
         .map(|value| value.lines().map(str::to_string).collect())
         .unwrap_or_default()
+}
+
+fn conflict_checkout_side(version: &ConflictVersion) -> &'static str {
+    // During a rebase, "ours" is the upstream commit and "theirs" is the local commit being replayed.
+    match version {
+        ConflictVersion::Local => "--theirs",
+        ConflictVersion::Remote => "--ours",
+    }
+}
+
+fn is_safe_conflict_path(path: &str) -> bool {
+    !path.trim().is_empty()
+        && !Path::new(path).is_absolute()
+        && !Path::new(path)
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
 }
 
 fn status(root: &Path, phase: &str, message: impl Into<String>) -> SyncStatus {
@@ -1001,6 +1032,53 @@ pub fn sync_continue_rebase(
 }
 
 #[tauri::command]
+pub fn sync_resolve_conflicts(
+    app: AppHandle,
+    state: State<'_, SyncState>,
+    workspace_path: String,
+    resolutions: Vec<SyncConflictResolution>,
+) -> Result<SyncResult, String> {
+    let _guard = state
+        .operation
+        .try_lock()
+        .map_err(|_| "另一个同步操作正在进行。".to_string())?;
+    let root = workspace_root(&workspace_path)?;
+    if !is_repository(&root) || !rebase_in_progress(&root) {
+        return Err("当前没有待处理的同步冲突。".to_string());
+    }
+    if resolutions.is_empty() {
+        return Err("请至少选择一个冲突文件的版本。".to_string());
+    }
+
+    let conflicts = conflict_files(&root).into_iter().collect::<HashSet<_>>();
+    let mut resolved = HashSet::new();
+    for resolution in resolutions {
+        if !is_safe_conflict_path(&resolution.path) || !conflicts.contains(&resolution.path) {
+            return Err("只能处理当前列表中的冲突文件。".to_string());
+        }
+        if !resolved.insert(resolution.path.clone()) {
+            return Err("同一个冲突文件不能重复选择版本。".to_string());
+        }
+        let side = conflict_checkout_side(&resolution.version);
+        git(&root, &["checkout", side, "--", &resolution.path])?;
+        git(&root, &["add", "--", &resolution.path])?;
+    }
+
+    let remaining = conflict_files(&root);
+    let message = if remaining.is_empty() {
+        "已保存冲突文件的版本选择，请继续同步。"
+    } else {
+        "已保存版本选择，请继续处理其余冲突文件。"
+    };
+    let next = status(&root, "conflicted", message);
+    emit_status(&app, &next);
+    Ok(SyncResult {
+        success: remaining.is_empty(),
+        status: next,
+    })
+}
+
+#[tauri::command]
 pub fn sync_abort_rebase(
     app: AppHandle,
     state: State<'_, SyncState>,
@@ -1026,8 +1104,9 @@ pub fn sync_abort_rebase(
 #[cfg(test)]
 mod tests {
     use super::{
-        checkout_blocked_by_untracked_files, ensure_gitignore, parse_status_changes,
-        workspace_user_content, SyncChange,
+        checkout_blocked_by_untracked_files, conflict_checkout_side, ensure_gitignore,
+        is_safe_conflict_path, parse_status_changes, workspace_user_content, ConflictVersion,
+        SyncChange,
     };
     use std::{
         fs,
@@ -1130,6 +1209,21 @@ mod tests {
         assert!(!checkout_blocked_by_untracked_files(
             "fatal: Unable to create '.git/index.lock': File exists."
         ));
+    }
+
+    #[test]
+    fn maps_rebase_conflict_versions_to_the_correct_git_sides() {
+        assert_eq!(conflict_checkout_side(&ConflictVersion::Local), "--theirs");
+        assert_eq!(conflict_checkout_side(&ConflictVersion::Remote), "--ours");
+    }
+
+    #[test]
+    fn accepts_only_workspace_relative_conflict_paths() {
+        assert!(is_safe_conflict_path(".onemind/preferences.json"));
+        assert!(is_safe_conflict_path("notes/项目.md"));
+        assert!(!is_safe_conflict_path("../outside.txt"));
+        assert!(!is_safe_conflict_path(""));
+        assert!(!is_safe_conflict_path("C:\\outside.txt"));
     }
 
     #[test]

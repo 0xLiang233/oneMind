@@ -193,6 +193,7 @@ export function installOneMindBridgeFallback() {
       importRemote: () => unsupported<SyncResult>("sync.importRemote"),
       initialize: () => unsupported<SyncResult>("sync.initialize"),
       run: () => unsupported<SyncResult>("sync.run"),
+      resolveConflicts: () => unsupported<SyncResult>("sync.resolveConflicts"),
       continueRebase: () => unsupported<SyncResult>("sync.continueRebase"),
       abortRebase: () => unsupported<SyncResult>("sync.abortRebase"),
       onStatusChanged: () => () => undefined
