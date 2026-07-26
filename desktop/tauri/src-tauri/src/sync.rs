@@ -11,6 +11,20 @@ use tauri::{AppHandle, Emitter, State};
 
 const DEFAULT_BRANCH: &str = "main";
 const SYNC_EVENT: &str = "sync-status-changed";
+const RUNTIME_IGNORE_ENTRIES: &[&str] = &[
+    ".onemind/logs/",
+    ".onemind/cache/",
+    ".onemind/snapshots/",
+    ".onemind/activity/",
+];
+const LEGACY_CONFIG_IGNORE_ENTRIES: &[&str] = &[
+    ".onemind/settings.json",
+    ".onemind/preferences.json",
+    ".onemind/recent-system-apps.json",
+    ".onemind/system-app-recents.json",
+    ".onemind/sync.json",
+];
+const CONFIG_OVERWRITE_REQUIRED: &str = "REMOTE_CONFIG_OVERWRITE_REQUIRED";
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -290,18 +304,18 @@ fn is_repository(root: &Path) -> bool {
 fn ensure_gitignore(root: &Path) -> Result<(), String> {
     let ignore_path = root.join(".gitignore");
     let existing = fs::read_to_string(&ignore_path).unwrap_or_default();
-    let required = [
-        ".onemind/logs/",
-        ".onemind/cache/",
-        ".onemind/snapshots/",
-        ".onemind/settings.json",
-        ".onemind/sync.json",
-        ".onemind/activity/",
-    ];
+    if is_generated_gitignore_contents(&existing) {
+        let next = format!("{}\n", RUNTIME_IGNORE_ENTRIES.join("\n"));
+        if existing != next {
+            fs::write(ignore_path, next).map_err(|error| error.to_string())?;
+        }
+        return Ok(());
+    }
+
     let mut next = existing.trim_end().to_string();
     let mut changed = false;
-    for entry in required {
-        if !existing.lines().any(|line| line.trim() == entry) {
+    for entry in RUNTIME_IGNORE_ENTRIES {
+        if !existing.lines().any(|line| line.trim() == *entry) {
             if !next.is_empty() {
                 next.push('\n');
             }
@@ -316,24 +330,22 @@ fn ensure_gitignore(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn is_generated_gitignore(root: &Path) -> bool {
-    let ignore_path = root.join(".gitignore");
-    let Ok(existing) = fs::read_to_string(ignore_path) else {
-        return false;
-    };
-    let allowed = [
-        ".onemind/logs/",
-        ".onemind/cache/",
-        ".onemind/snapshots/",
-        ".onemind/settings.json",
-        ".onemind/sync.json",
-        ".onemind/activity/",
-    ];
-    existing
+fn is_generated_gitignore_contents(contents: &str) -> bool {
+    let entries = contents
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .all(|line| allowed.contains(&line))
+        .collect::<Vec<_>>();
+    !entries.is_empty()
+        && entries.iter().all(|line| {
+            RUNTIME_IGNORE_ENTRIES.contains(line) || LEGACY_CONFIG_IGNORE_ENTRIES.contains(line)
+        })
+}
+
+fn checkout_blocked_by_untracked_files(error: &str) -> bool {
+    error
+        .to_ascii_lowercase()
+        .contains("untracked working tree files would be overwritten by checkout")
 }
 
 fn is_empty_generated_workspace_directory(root: &Path, name: &str) -> Result<bool, String> {
@@ -354,7 +366,7 @@ fn workspace_user_content(root: &Path) -> Result<Option<String>, String> {
         if name == ".git" || name == ".onemind" {
             continue;
         }
-        if name == ".gitignore" && is_generated_gitignore(root) {
+        if name == ".gitignore" {
             continue;
         }
         if ["notes", "assets", "inbox", "sources"].contains(&name.as_str())
@@ -749,6 +761,7 @@ pub fn sync_import_remote(
     state: State<'_, SyncState>,
     workspace_path: String,
     mut config: SyncConfig,
+    overwrite_local_config: Option<bool>,
 ) -> Result<SyncResult, String> {
     let _guard = state
         .operation
@@ -790,13 +803,32 @@ pub fn sync_import_remote(
     if git(&root, &["rev-parse", "--verify", &remote_ref]).is_err() {
         return Err(format!("远程仓库不存在分支 {}。", config.branch));
     }
-    git(
-        &root,
-        &["checkout", "-B", &config.branch, "--track", &remote_ref],
-    )?;
+    let checkout_args = if overwrite_local_config.unwrap_or(false) {
+        vec![
+            "checkout",
+            "--force",
+            "-B",
+            &config.branch,
+            "--track",
+            &remote_ref,
+        ]
+    } else {
+        vec!["checkout", "-B", &config.branch, "--track", &remote_ref]
+    };
+    if let Err(error) = git(&root, &checkout_args) {
+        if !overwrite_local_config.unwrap_or(false) && checkout_blocked_by_untracked_files(&error) {
+            return Err(format!(
+                "{CONFIG_OVERWRITE_REQUIRED}: 远程仓库包含工作区配置，当前电脑也已生成配置。请选择保留本机配置，或确认使用远程配置覆盖本机配置。笔记、附件、收集箱和来源文件不会被覆盖。\n{error}"
+            ));
+        }
+        return Err(error);
+    }
     ensure_gitignore(&root)?;
-    config.enabled = true;
-    write_config(&root, &config)?;
+    let mut imported_config = read_config(&root);
+    imported_config.enabled = true;
+    imported_config.remote_url = config.remote_url;
+    imported_config.branch = config.branch;
+    write_config(&root, &imported_config)?;
     let next = status(&root, "idle", "已下载远程工作区，可以开始同步");
     emit_status(&app, &next);
     Ok(SyncResult {
@@ -993,7 +1025,10 @@ pub fn sync_abort_rebase(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_status_changes, workspace_user_content, SyncChange};
+    use super::{
+        checkout_blocked_by_untracked_files, ensure_gitignore, parse_status_changes,
+        workspace_user_content, SyncChange,
+    };
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},
@@ -1083,6 +1118,54 @@ mod tests {
             workspace_user_content(&root).unwrap(),
             Some("assets".to_string())
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recognizes_only_checkout_configuration_conflicts() {
+        assert!(checkout_blocked_by_untracked_files(
+            "error: The following untracked working tree files would be overwritten by checkout:"
+        ));
+        assert!(!checkout_blocked_by_untracked_files(
+            "fatal: Unable to create '.git/index.lock': File exists."
+        ));
+    }
+
+    #[test]
+    fn tracks_workspace_configuration_and_ignores_only_runtime_state() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("onemind-sync-ignore-{suffix}"));
+        fs::create_dir_all(&root).unwrap();
+
+        ensure_gitignore(&root).unwrap();
+        let ignore = fs::read_to_string(root.join(".gitignore")).unwrap();
+        for path in [
+            ".onemind/logs/",
+            ".onemind/cache/",
+            ".onemind/snapshots/",
+            ".onemind/activity/",
+        ] {
+            assert!(ignore.lines().any(|line| line == path));
+        }
+        assert!(!ignore
+            .lines()
+            .any(|line| line == ".onemind/preferences.json"));
+
+        fs::write(
+            root.join(".gitignore"),
+            ".onemind/logs/\n.onemind/preferences.json\n.onemind/sync.json\n",
+        )
+        .unwrap();
+        ensure_gitignore(&root).unwrap();
+        let migrated = fs::read_to_string(root.join(".gitignore")).unwrap();
+        assert!(!migrated
+            .lines()
+            .any(|line| line == ".onemind/preferences.json"));
+        assert!(!migrated.lines().any(|line| line == ".onemind/sync.json"));
 
         fs::remove_dir_all(root).unwrap();
     }

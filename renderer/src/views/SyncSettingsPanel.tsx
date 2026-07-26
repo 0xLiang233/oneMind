@@ -13,7 +13,7 @@ type Props = {
   onTestRemote: (remoteUrl: string) => Promise<RemoteCheck | null>
   onListChanges: () => Promise<SyncChange[]>
   onAuthenticateGitHub: (username?: string) => Promise<AuthenticationResult | null>
-  onImportRemote: (config: SyncConfig) => Promise<SyncResult | null>
+  onImportRemote: (config: SyncConfig, overwriteLocalConfig?: boolean) => Promise<SyncResult | null>
   onContinueRebase: () => Promise<SyncResult | null>
   onAbortRebase: () => Promise<SyncResult | null>
 }
@@ -127,6 +127,7 @@ export function SyncSettingsPanel({
   const [authStarted, setAuthStarted] = useState(false)
   const [authMessage, setAuthMessage] = useState("")
   const [formError, setFormError] = useState("")
+  const [configConflictDismissed, setConfigConflictDismissed] = useState(false)
   const [changesExpanded, setChangesExpanded] = useState(false)
   const [changes, setChanges] = useState<SyncChange[]>([])
   const [changesLoading, setChangesLoading] = useState(false)
@@ -203,6 +204,10 @@ export function SyncSettingsPanel({
     try {
       const result = await onTestRemote(draft.remoteUrl)
       setRemoteCheck(result)
+      if (result?.success) {
+        setAuthStarted(false)
+        setAuthMessage("")
+      }
     } catch (nextError) {
       setFormError(String(nextError))
     } finally {
@@ -226,16 +231,19 @@ export function SyncSettingsPanel({
     }
   }
 
-  async function importRemote() {
+  async function importRemote(overwriteLocalConfig = false) {
     if (remoteCheck?.state !== "has_history") return
     const next = { ...draft, enabled: true }
-    const accepted = window.confirm("将下载远程仓库内容到当前空工作区。本地笔记不会被覆盖；检测到本地内容时操作会停止。继续吗？")
+    const accepted = window.confirm(overwriteLocalConfig
+      ? "将使用远程工作区配置覆盖本机的 .onemind 配置和 .gitignore。本地笔记、附件、收集箱和来源文件不会被覆盖。继续吗？"
+      : "将下载远程仓库内容到当前空工作区。本地笔记不会被覆盖；检测到本地内容时操作会停止。继续吗？")
     if (!accepted) return
     setDraft(next)
     setLocalAction("importingRemote")
     setFormError("")
+    setConfigConflictDismissed(false)
     try {
-      await onImportRemote(next)
+      await onImportRemote(next, overwriteLocalConfig)
       setRemoteCheck(null)
     } catch (nextError) {
       setFormError(String(nextError))
@@ -324,14 +332,18 @@ export function SyncSettingsPanel({
     }
   }
 
-  const remoteReady = remoteCheck?.success === true && (remoteCheck.state === "empty" || status.configured)
-  const setupReady = preflight.gitAvailable && preflight.identityConfigured && remoteReady
+  const remoteReady = remoteCheck?.success === true
+  const remoteEmpty = remoteCheck?.success === true && remoteCheck.state === "empty"
+  const setupReady = preflight.gitAvailable && preflight.identityConfigured && remoteEmpty
   const httpsRemote = draft.remoteUrl.trim().toLowerCase().startsWith("http")
   const githubHttps = /^https?:\/\/github\.com\//i.test(draft.remoteUrl.trim())
   const authenticationRequired = /\b403\b|write access to repository not granted|authentication failed|permission denied/i.test(error || status.message)
-  const authenticationReady = !githubHttps || authStarted || (!needsSetup && !authenticationRequired)
+  const authenticationReady = !githubHttps || remoteReady || authStarted || (!needsSetup && !authenticationRequired)
   const canCompleteSetup = setupReady && authenticationReady
   const remoteHasHistory = remoteCheck?.success === true && remoteCheck.state === "has_history"
+  const configOverwriteRequired = (formError || error).includes("REMOTE_CONFIG_OVERWRITE_REQUIRED")
+  const showConfigOverwriteChoice = remoteHasHistory && configOverwriteRequired && !configConflictDismissed
+  const displayedError = formError || (configOverwriteRequired ? "" : error)
   const operationLabel = localAction ? actionLabels[localAction] : phaseLabels[status.phase] || ""
 
   return (
@@ -445,7 +457,7 @@ export function SyncSettingsPanel({
                     <span>{remoteCheck.message}</span>
                   </div>
                 ) : null}
-                {githubHttps ? (
+                {githubHttps && !remoteReady ? (
                   <div className="sync-auth-box">
                     <div>
                       <strong>{authStarted ? "完成授权后重新检查" : "登录 GitHub"}</strong>
@@ -460,19 +472,32 @@ export function SyncSettingsPanel({
                   <div className="sync-import-box">
                     <div>
                       <strong>下载已有远程工作区</strong>
-                      <p>仅适用于没有本地笔记的工作区。检测到本地文件或提交时会停止，不会覆盖数据。</p>
+                      <p>仅适用于没有本地笔记的工作区。首次遇到本机配置时，可选择保留或用远程配置覆盖。</p>
                     </div>
                     <button type="button" className="compact" disabled={isBusy || !preflight.identityConfigured} onClick={() => void importRemote()}>
                       {localAction === "importingRemote" ? <LoadingLabel label="正在下载" /> : "下载远程内容"}
                     </button>
                   </div>
                 ) : null}
+                {showConfigOverwriteChoice ? (
+                  <div className="sync-import-box sync-import-conflict">
+                    <AlertTriangle size={18} aria-hidden="true" />
+                    <div>
+                      <strong>本机配置与远程配置冲突</strong>
+                      <p>远程已包含工作区配置。本机的 `.onemind` 配置和 `.gitignore` 可以保留，或使用远程版本替换；笔记和附件不会被覆盖。</p>
+                    </div>
+                    <div className="sync-auth-repair-actions">
+                      <button type="button" className="secondary compact" onClick={() => setConfigConflictDismissed(true)}>保留本机配置</button>
+                      <button type="button" className="compact" disabled={isBusy} onClick={() => void importRemote(true)}>使用远程配置覆盖本机</button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </section>
           </div>
 
-          {formError || error ? (
-            <div className="sync-setup-error" role="status"><AlertTriangle size={15} /><span>{formError || error}</span></div>
+          {displayedError ? (
+            <div className="sync-setup-error" role="status"><AlertTriangle size={15} /><span>{displayedError}</span></div>
           ) : null}
           <div className="sync-settings-actions">
             <button type="button" className="compact" disabled={isBusy || !canCompleteSetup} onClick={() => void connectRepository()}>

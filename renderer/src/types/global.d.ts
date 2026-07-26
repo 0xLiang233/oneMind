@@ -317,7 +317,7 @@ interface Window {
       writeIdentity: (workspacePath: string, identity: GitIdentity) => Promise<GitIdentity>
       testRemote: (workspacePath: string, remoteUrl: string) => Promise<RemoteCheck>
       authenticateGitHub: (workspacePath: string, username?: string) => Promise<AuthenticationResult>
-      importRemote: (workspacePath: string, config: SyncConfig) => Promise<SyncResult>
+      importRemote: (workspacePath: string, config: SyncConfig, overwriteLocalConfig?: boolean) => Promise<SyncResult>
       initialize: (workspacePath: string, config: SyncConfig) => Promise<SyncResult>
       run: (workspacePath: string) => Promise<SyncResult>
       continueRebase: (workspacePath: string) => Promise<SyncResult>

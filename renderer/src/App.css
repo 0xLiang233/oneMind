@@ -3172,8 +3172,8 @@ button.sync-change-refresh:hover {
   line-height: 1.5;
 }
 .sync-check-result svg { flex: 0 0 14px; margin-top: 2px; }
-.sync-check-result.empty { color: var(--color-success); }
-.sync-check-result.has_history,
+.sync-check-result.empty,
+.sync-check-result.has_history { color: var(--color-success); }
 .sync-check-result.error { color: var(--color-danger); }
 .sync-auth-box,
 .sync-auth-repair,
@@ -3217,6 +3217,12 @@ button.sync-change-refresh:hover {
 .sync-import-box {
   border-color: color-mix(in srgb, var(--color-accent-primary) 32%, var(--color-border-default));
 }
+.sync-import-conflict {
+  align-items: flex-start;
+  border-color: color-mix(in srgb, var(--color-danger) 32%, var(--color-border-default));
+}
+.sync-import-conflict > svg { flex: 0 0 18px; color: var(--color-danger); }
+.sync-import-box > .sync-auth-repair-actions { min-width: auto; flex: 0 0 auto; }
 .sync-conflict-recovery {
   border-color: color-mix(in srgb, var(--color-danger) 32%, var(--color-border-default));
   color: var(--color-danger);

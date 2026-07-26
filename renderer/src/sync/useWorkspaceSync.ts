@@ -102,15 +102,15 @@ export function useWorkspaceSync(workspacePath: string, onWorkspaceChanged: () =
     }
   }, [workspacePath])
 
-  const importRemote = useCallback(async (nextConfig: SyncConfig) => {
+  const importRemote = useCallback(async (nextConfig: SyncConfig, overwriteLocalConfig = false) => {
     if (!workspacePath || runningRef.current) return null
     runningRef.current = true
     setError("")
     try {
       await flushBeforeSync()
-      const result = await window.oneMind.sync.importRemote(workspacePath, nextConfig)
-      setConfig(nextConfig)
+      const result = await window.oneMind.sync.importRemote(workspacePath, nextConfig, overwriteLocalConfig)
       setStatus(result.status)
+      await refresh()
       await onWorkspaceChanged()
       window.dispatchEvent(new CustomEvent("onemind-workspace-changed"))
       return result
@@ -121,7 +121,7 @@ export function useWorkspaceSync(workspacePath: string, onWorkspaceChanged: () =
     } finally {
       runningRef.current = false
     }
-  }, [onWorkspaceChanged, workspacePath])
+  }, [onWorkspaceChanged, refresh, workspacePath])
 
   const resolveRebase = useCallback(async (operation: "continueRebase" | "abortRebase") => {
     if (!workspacePath || runningRef.current) return null
