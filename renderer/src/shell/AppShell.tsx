@@ -34,8 +34,47 @@ interface Tab {
 
 const SIDEBAR_STORAGE_KEY = "onemind-sidebar-collapsed"
 const SIDEBAR_WIDTH_STORAGE_KEY = "onemind-sidebar-width"
+const NOTES_TREE_EXPANDED_STORAGE_KEY = "onemind-notes-tree-expanded"
 const SIDEBAR_MIN_WIDTH = 204
 const SIDEBAR_MAX_WIDTH = 360
+
+function getInitialExpandedFolders(): Set<string> {
+  try {
+    const raw = localStorage.getItem(NOTES_TREE_EXPANDED_STORAGE_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(parsed)) return new Set()
+    return new Set(parsed.filter((item): item is string => typeof item === "string"))
+  } catch {
+    return new Set()
+  }
+}
+
+function normalizeTreePath(path: string) {
+  return path.replace(/\//g, "\\")
+}
+
+// Folder nodes start collapsed; only folders the user opened (persisted via
+// localStorage) and ancestors of the active note are expanded.
+function expandPathAncestors(expanded: Set<string>, targetPath: string, notesPath: string): Set<string> {
+  const root = normalizeTreePath(notesPath)
+  let current = normalizeTreePath(targetPath)
+  if (!current.toLowerCase().startsWith(root.toLowerCase() + "\\")) return expanded
+
+  current = current.slice(0, current.lastIndexOf("\\"))
+  const next = new Set(expanded)
+  while (current.length > root.length) {
+    next.add(current)
+    current = current.slice(0, current.lastIndexOf("\\"))
+  }
+  return next
+}
+
+function remapExpandedFolders(expanded: Set<string>, oldPath: string, newPath: string): Set<string> {
+  if (oldPath === newPath) return expanded
+  const next = new Set<string>()
+  expanded.forEach((path) => next.add(remapDescendantPath(path, oldPath, newPath)))
+  return next
+}
 
 function applyPreferences(preferences: AppPreferences) {
   const root = document.documentElement
@@ -304,6 +343,7 @@ export function AppShell() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(getInitialSidebarCollapsed)
   const [sidebarWidth, setSidebarWidth] = useState(getInitialSidebarWidth)
   const sidebarWidthRef = useRef(204)
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(getInitialExpandedFolders)
   const [notesSearchExpanded, setNotesSearchExpanded] = useState(false)
   const [notesSearchQuery, setNotesSearchQuery] = useState("")
   const notesSearchRef = useRef<HTMLInputElement | null>(null)
@@ -375,6 +415,14 @@ export function AppShell() {
   }, [sidebarCollapsed])
 
   useEffect(() => {
+    try {
+      localStorage.setItem(NOTES_TREE_EXPANDED_STORAGE_KEY, JSON.stringify([...expandedFolders]))
+    } catch {
+      // Storage may be unavailable; in-memory expansion state still works.
+    }
+  }, [expandedFolders])
+
+  useEffect(() => {
     sidebarWidthRef.current = sidebarWidth
   }, [sidebarWidth])
 
@@ -406,6 +454,28 @@ export function AppShell() {
     }
     void load()
   }, [workspace])
+
+  // Selecting a note (tree click, tab restore, deep link) reveals it in the
+  // tree by expanding its ancestor folders once; the user can collapse them
+  // again afterwards.
+  const selectNotePath = useCallback((path: string | null) => {
+    setSelectedSidebarPath(path)
+    if (path && workspace) {
+      setExpandedFolders(prev => expandPathAncestors(prev, path, workspace.notesPath))
+    }
+  }, [workspace])
+
+  const handleFolderToggle = useCallback((node: NoteTreeNode, event: React.SyntheticEvent<HTMLDetailsElement>) => {
+    // SyntheticEvent.currentTarget is nulled after the handler returns, so it
+    // must be read here rather than inside the setState updater below.
+    const isOpen = event.currentTarget.open
+    setExpandedFolders(prev => {
+      const next = new Set(prev)
+      if (isOpen) next.add(node.path)
+      else next.delete(node.path)
+      return next
+    })
+  }, [])
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed(prev => !prev)
@@ -557,6 +627,7 @@ export function AppShell() {
   function remapOpenNotePaths(oldPath: string, newPath: string) {
     setSelectedSidebarPath((current) => current ? remapDescendantPath(current, oldPath, newPath) : current)
     setTabs((current) => remapNoteTabs(current, oldPath, newPath))
+    setExpandedFolders((current) => remapExpandedFolders(current, oldPath, newPath))
     const nextRoute = remapNoteRoute(currentRoutePath, oldPath, newPath)
     if (nextRoute !== currentRoutePath) navigate(nextRoute, { replace: true })
   }
@@ -612,6 +683,40 @@ export function AppShell() {
     } finally { setBusy(false) }
   }
 
+  async function submitCreateDialog() {
+    if (!workspace || !createDialog) return
+    try {
+      const ws = workspace
+      const dirPath = createDialog.dirPath
+      if (createDialog.type === "file") {
+        const filePath = await window.oneMind.notes.createFile(ws.workspacePath, dirPath, nameInput)
+        trackActivity(ws.workspacePath, {
+          module: "notes",
+          action: "create",
+          targetType: "note",
+          targetId: filePath,
+          targetLabel: nameInput
+        })
+        setExpandedFolders(prev => expandPathAncestors(prev, filePath, ws.notesPath))
+        setSelectedSidebarPath(filePath)
+        navigate("/notes?selected=" + encodeURIComponent(filePath))
+      } else {
+        const folderPath = await window.oneMind.notes.createFolder(ws.workspacePath, dirPath, nameInput)
+        trackActivity(ws.workspacePath, {
+          module: "notes",
+          action: "create",
+          targetType: "folder",
+          targetId: folderPath,
+          targetLabel: nameInput
+        })
+        setExpandedFolders(prev => expandPathAncestors(prev, folderPath, ws.notesPath))
+      }
+      setCreateDialog(null)
+      setNameInput('')
+      await refreshNoteTree()
+    } catch (err) { console.error(err) }
+  }
+
   async function handleSelectWorkspace() {
     if (!window.oneMind?.workspace) return
     setBusy(true)
@@ -647,6 +752,11 @@ export function AppShell() {
       await flushBeforeSync()
       await window.oneMind.notes.delete(removedPath)
       setNoteTree((current) => removeNoteTreeNode(current, removedPath))
+      setExpandedFolders((current) => {
+        const next = new Set(current)
+        next.delete(removedPath)
+        return next
+      })
       removeOpenNotePaths(removedPath)
       setDeleteTarget(null)
       await refreshNoteTree()
@@ -847,7 +957,8 @@ export function AppShell() {
           key={node.id}
           className={"tree-folder" + (isDropTarget ? " drop-target" : "")}
           style={{ "--tree-depth": depth } as React.CSSProperties}
-          open
+          open={expandedFolders.has(node.path)}
+          onToggle={(e) => handleFolderToggle(node, e)}
           draggable={!inAssets}
           onDragStart={(e) => handleTreeDragStart(e, node)}
           onDragEnd={() => { setDraggingNode(null); setDropTargetPath(null) }}
@@ -1141,7 +1252,7 @@ export function AppShell() {
               handleCreateDefault,
               handleSelectWorkspace,
               selectedSidebarPath,
-              setSelectedSidebarPath,
+              setSelectedSidebarPath: selectNotePath,
               workspaceSync
             }} />
           </section>
@@ -1225,37 +1336,10 @@ export function AppShell() {
                 <input className="convert-input" value={nameInput}
                   onChange={(e) => setNameInput(e.target.value)}
                   placeholder={createDialog.type === "file" ? "输入笔记名称" : "输入文件夹名称"}
-                  onKeyDown={async (e) => {
+                  onKeyDown={(e) => {
                     if (e.key === "Enter" && workspace) {
                       e.preventDefault()
-                      try {
-                        const ws = workspace
-                        const dirPath = createDialog.dirPath
-                        if (createDialog.type === "file") {
-                          const filePath = await window.oneMind.notes.createFile(ws.workspacePath, dirPath, nameInput)
-                          trackActivity(ws.workspacePath, {
-                            module: "notes",
-                            action: "create",
-                            targetType: "note",
-                            targetId: filePath,
-                            targetLabel: nameInput
-                          })
-                          setSelectedSidebarPath(filePath)
-                          navigate("/notes?selected=" + encodeURIComponent(filePath))
-                        } else {
-                          const folderPath = await window.oneMind.notes.createFolder(ws.workspacePath, dirPath, nameInput)
-                          trackActivity(ws.workspacePath, {
-                            module: "notes",
-                            action: "create",
-                            targetType: "folder",
-                            targetId: folderPath,
-                            targetLabel: nameInput
-                          })
-                        }
-                        setCreateDialog(null)
-                        setNameInput('')
-                        await refreshNoteTree()
-                      } catch (err) { console.error(err) }
+                      void submitCreateDialog()
                     }
                   }}
                 />
@@ -1263,37 +1347,7 @@ export function AppShell() {
             </div>
             <div className="convert-footer">
               <div className="convert-hint">Enter 创建，Esc 关闭</div>
-              <button type="button" className="compact" onClick={async () => {
-                if (!workspace) return
-                try {
-                  const ws = workspace
-                  const dirPath = createDialog.dirPath
-                  if (createDialog.type === "file") {
-                    const filePath = await window.oneMind.notes.createFile(ws.workspacePath, dirPath, nameInput)
-                    trackActivity(ws.workspacePath, {
-                      module: "notes",
-                      action: "create",
-                      targetType: "note",
-                      targetId: filePath,
-                      targetLabel: nameInput
-                    })
-                    setSelectedSidebarPath(filePath)
-                    navigate("/notes?selected=" + encodeURIComponent(filePath))
-                  } else {
-                    const folderPath = await window.oneMind.notes.createFolder(ws.workspacePath, dirPath, nameInput)
-                    trackActivity(ws.workspacePath, {
-                      module: "notes",
-                      action: "create",
-                      targetType: "folder",
-                      targetId: folderPath,
-                      targetLabel: nameInput
-                    })
-                  }
-                  setCreateDialog(null)
-                  setNameInput('')
-                  await refreshNoteTree()
-                } catch (err) { console.error(err) }
-              }}>
+              <button type="button" className="compact" onClick={() => void submitCreateDialog()}>
                 {createDialog.type === "file" ? '创建笔记' : '创建文件夹'}
               </button>
             </div>
