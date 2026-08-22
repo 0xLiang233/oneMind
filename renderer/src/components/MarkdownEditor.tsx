@@ -64,6 +64,14 @@ type EditorContextMenuState = {
   imageNode: HTMLElement | null
 }
 
+// Mermaid preview layout. Keep in sync with the `.markdown-mermaid-viewport`
+// rules in App.css: padding and max-height must match the values below.
+const MERMAID_VIEWPORT_PADDING = 24
+const MERMAID_VIEWPORT_HEIGHT_RATIO = 0.64
+const MERMAID_VIEWPORT_MAX_HEIGHT = 680
+const MERMAID_CANVAS_MIN_HEIGHT = 152
+const MERMAID_FIT_MIN_SCALE = 0.2
+
 export function MarkdownEditor({
   value,
   onChange,
@@ -206,14 +214,31 @@ export function MarkdownEditor({
   }, [readonly])
 
   useEffect(() => {
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: "strict",
-      theme: document.documentElement.dataset.theme === "dark" ? "dark" : "default",
-      flowchart: {
-        htmlLabels: false
-      }
-    })
+    let rerenderTimer = 0
+
+    const applyTheme = () => {
+      configureMermaidTheme()
+      window.clearTimeout(rerenderTimer)
+      rerenderTimer = window.setTimeout(() => {
+        rerenderMermaidPreviews(rootRef.current)
+      }, 40)
+    }
+
+    configureMermaidTheme()
+    const themeObserver = new MutationObserver(applyTheme)
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] })
+
+    const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
+    const handleSystemThemeChange = () => {
+      if (!document.documentElement.dataset.theme) applyTheme()
+    }
+    systemTheme.addEventListener("change", handleSystemThemeChange)
+
+    return () => {
+      window.clearTimeout(rerenderTimer)
+      themeObserver.disconnect()
+      systemTheme.removeEventListener("change", handleSystemThemeChange)
+    }
   }, [])
 
   useEffect(() => {
@@ -251,7 +276,7 @@ export function MarkdownEditor({
 
         const renderId = `onemind-mermaid-${Date.now()}-${Math.random().toString(36).slice(2)}`
         void mermaid.render(renderId, content)
-          .then((result) => applyPreview(createMermaidPreviewElement(result.svg)))
+          .then((result) => applyPreview(createMermaidPreviewElement(result.svg, content)))
           .catch(() => applyPreview(createMermaidErrorElement()))
       }
     })
@@ -779,10 +804,11 @@ function createMermaidErrorElement() {
   return element
 }
 
-function createMermaidPreviewElement(svg: string) {
+function createMermaidPreviewElement(svg: string, source: string) {
   const viewport = document.createElement("div")
   viewport.className = "markdown-mermaid-viewport"
   viewport.dataset.scale = "1"
+  viewport.dataset.mermaidSource = source
 
   const canvas = document.createElement("div")
   canvas.className = "markdown-mermaid-canvas"
@@ -791,6 +817,45 @@ function createMermaidPreviewElement(svg: string) {
   viewport.appendChild(canvas)
   queueMermaidPreviewFit(viewport)
   return viewport
+}
+
+function resolveMermaidTheme() {
+  const themeAttribute = document.documentElement.dataset.theme
+  if (themeAttribute === "dark" || themeAttribute === "light") {
+    return themeAttribute === "dark" ? "dark" : "default"
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default"
+}
+
+function configureMermaidTheme() {
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: "strict",
+    theme: resolveMermaidTheme(),
+    flowchart: {
+      htmlLabels: false
+    }
+  })
+}
+
+function rerenderMermaidPreviews(root: HTMLElement | null) {
+  root?.querySelectorAll<HTMLElement>(".markdown-mermaid-viewport").forEach((viewport) => {
+    const source = viewport.dataset.mermaidSource
+    if (!source) return
+
+    const renderId = `onemind-mermaid-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    void mermaid.render(renderId, source)
+      .then((result) => {
+        const canvas = viewport.querySelector<HTMLElement>(".markdown-mermaid-canvas")
+        if (!canvas || !document.body.contains(viewport)) return
+        canvas.innerHTML = result.svg
+        prepareMermaidSvg(canvas.querySelector("svg"))
+        resizeMermaidPreview(viewport, Math.max(getMermaidPreviewNumber(viewport, "scale", 1), 1))
+      })
+      .catch(() => {
+        // Keep the previous render when a theme switch re-render fails.
+      })
+  })
 }
 
 function findMermaidViewport(target: EventTarget | null) {
@@ -821,7 +886,7 @@ function queueMermaidPreviewFit(viewport: HTMLElement) {
 
   const fitWhenStable = () => {
     if (!document.body.contains(viewport)) {
-      frame = window.requestAnimationFrame(fitWhenStable)
+      frame = 0
       return
     }
 
@@ -833,33 +898,75 @@ function queueMermaidPreviewFit(viewport: HTMLElement) {
     stableFrames = isStable ? stableFrames + 1 : 0
 
     if (stableFrames >= 2) {
-      fitMermaidPreview(viewport)
+      frame = 0
+      if (getMermaidPreviewNumber(viewport, "scale", 1) <= 1.02) {
+        fitMermaidPreview(viewport)
+      }
       return
     }
 
     frame = window.requestAnimationFrame(fitWhenStable)
   }
 
-  frame = window.requestAnimationFrame(fitWhenStable)
-  void document.fonts?.ready.then(() => fitMermaidPreview(viewport))
+  const scheduleFit = () => {
+    if (frame) window.cancelAnimationFrame(frame)
+    stableFrames = 0
+    frame = window.requestAnimationFrame(fitWhenStable)
+  }
+
+  const handleWindowResize = () => {
+    if (!document.body.contains(viewport)) {
+      teardown()
+      return
+    }
+    if (getMermaidPreviewNumber(viewport, "scale", 1) <= 1.02) scheduleFit()
+  }
+
+  const teardown = () => {
+    window.removeEventListener("resize", handleWindowResize)
+    resizeObserver.disconnect()
+    if (frame) {
+      window.cancelAnimationFrame(frame)
+      frame = 0
+    }
+  }
+
+  const resizeObserver = new ResizeObserver(() => {
+    if (!document.body.contains(viewport)) {
+      teardown()
+      return
+    }
+    if (getMermaidPreviewNumber(viewport, "scale", 1) <= 1.02) scheduleFit()
+  })
+  resizeObserver.observe(viewport)
+  window.addEventListener("resize", handleWindowResize)
+  scheduleFit()
+
+  void document.fonts?.ready.then(() => {
+    if (document.body.contains(viewport) && getMermaidPreviewNumber(viewport, "scale", 1) <= 1.02) {
+      fitMermaidPreview(viewport)
+    }
+  })
   window.setTimeout(() => {
     if (document.body.contains(viewport) && getMermaidPreviewNumber(viewport, "scale", 1) <= 1.02) {
       fitMermaidPreview(viewport)
     }
+    if (!document.body.contains(viewport)) teardown()
   }, 180)
-
-  const resizeObserver = new ResizeObserver(() => {
-    if (getMermaidPreviewNumber(viewport, "scale", 1) <= 1.02) {
-      if (frame) window.cancelAnimationFrame(frame)
-      stableFrames = 0
-      frame = window.requestAnimationFrame(fitWhenStable)
-    }
-  })
-  resizeObserver.observe(viewport)
 }
 
 function getMermaidSvg(viewport: HTMLElement) {
   return viewport.querySelector<SVGSVGElement>(".markdown-mermaid-canvas svg")
+}
+
+function getMermaidAvailableSize(viewport: HTMLElement) {
+  const innerWidth = Math.max(viewport.clientWidth - MERMAID_VIEWPORT_PADDING * 2, 200)
+  const innerHeight = Math.max(
+    Math.min(window.innerHeight * MERMAID_VIEWPORT_HEIGHT_RATIO, MERMAID_VIEWPORT_MAX_HEIGHT)
+      - MERMAID_VIEWPORT_PADDING * 2,
+    160
+  )
+  return { innerWidth, innerHeight }
 }
 
 function fitMermaidPreview(viewport: HTMLElement, options: { resetScroll?: boolean } = {}) {
@@ -879,9 +986,13 @@ function resizeMermaidPreview(
   const viewBox = svg?.viewBox.baseVal
   if (!svg || !viewBox || !viewBox.width || !viewBox.height) return
 
-  const viewportWidth = Math.max(viewport.clientWidth - 56, 240)
-  const baseWidth = Math.max(viewportWidth, Math.min(viewBox.width, viewportWidth))
-  const nextWidth = baseWidth * scale
+  const { innerWidth, innerHeight } = getMermaidAvailableSize(viewport)
+  const fitScale = clamp(
+    Math.min(innerWidth / viewBox.width, innerHeight / viewBox.height),
+    MERMAID_FIT_MIN_SCALE,
+    1
+  )
+  const nextWidth = viewBox.width * fitScale * scale
   const nextHeight = nextWidth * (viewBox.height / viewBox.width)
   const beforeRect = svg.getBoundingClientRect()
   const focusX = focus ? focus.clientX - beforeRect.left + viewport.scrollLeft : 0
@@ -893,9 +1004,10 @@ function resizeMermaidPreview(
   svg.style.height = `${nextHeight}px`
   const canvas = svg.closest<HTMLElement>(".markdown-mermaid-canvas")
   if (canvas) {
-    canvas.style.width = `${Math.max(nextWidth, viewport.clientWidth - 56)}px`
-    canvas.style.height = `${Math.max(nextHeight, viewport.clientHeight - 56)}px`
-    canvas.style.justifyContent = nextWidth < viewport.clientWidth - 56 ? "center" : "flex-start"
+    canvas.style.width = `${Math.max(nextWidth, innerWidth)}px`
+    canvas.style.height = `${Math.max(nextHeight, MERMAID_CANVAS_MIN_HEIGHT)}px`
+    canvas.style.justifyContent = nextWidth < innerWidth ? "center" : "flex-start"
+    canvas.style.alignItems = nextHeight < MERMAID_CANVAS_MIN_HEIGHT ? "center" : "flex-start"
   }
   viewport.dataset.scale = String(scale)
   viewport.dataset.zoomed = String(scale > 1.02)

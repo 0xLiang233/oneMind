@@ -1,8 +1,179 @@
 /*
- * OneMind owns the presentation of Milkdown extension components. Crepe's
- * common styles provide structural layout only; visual states map back to the
- * application tokens here so future extensions have one explicit boundary.
+ * OneMind owns the presentation of Milkdown extension components. Package
+ * styles (Crepe theme vars, code-mirror component CSS) provide structural
+ * layout only; the note body is styled here so all visual states map back to
+ * the application tokens through one explicit boundary. This stylesheet is
+ * evaluated after every package stylesheet imported by MarkdownEditor.
  */
+
+/* ===== Note body typography & rhythm ===== */
+.onemind-markdown-editor .milkdown .ProseMirror {
+  min-height: 420px;
+  padding: 0 0 96px;
+  outline: 0;
+  color: var(--color-text-primary);
+  caret-color: var(--color-accent-primary);
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror p {
+  margin: 0.5em 0;
+  padding: 0;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror ul,
+.onemind-markdown-editor .milkdown .ProseMirror ol {
+  margin: 0.3em 0;
+  padding-inline-start: 1.6em;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror li {
+  margin: 0;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror li > ul,
+.onemind-markdown-editor .milkdown .ProseMirror li > ol {
+  margin: 0.15em 0;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror li p {
+  margin: 0.15em 0;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror > h1:first-child,
+.onemind-markdown-editor .milkdown .ProseMirror > h2:first-child,
+.onemind-markdown-editor .milkdown .ProseMirror > h3:first-child,
+.onemind-markdown-editor .milkdown .ProseMirror > h4:first-child,
+.onemind-markdown-editor .milkdown .ProseMirror > h5:first-child,
+.onemind-markdown-editor .milkdown .ProseMirror > h6:first-child,
+.onemind-markdown-editor .milkdown .ProseMirror > p:first-child {
+  margin-top: 0;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror h1,
+.onemind-markdown-editor .milkdown .ProseMirror h2,
+.onemind-markdown-editor .milkdown .ProseMirror h3,
+.onemind-markdown-editor .milkdown .ProseMirror h4,
+.onemind-markdown-editor .milkdown .ProseMirror h5,
+.onemind-markdown-editor .milkdown .ProseMirror h6 {
+  color: var(--color-text-primary);
+  font-family: var(--font-ui);
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror h1 {
+  margin: 1em 0 0.4em;
+  font-size: 1.75em;
+  font-weight: 700;
+}
+.onemind-markdown-editor .milkdown .ProseMirror h2 {
+  margin: 1.2em 0 0.35em;
+  font-size: 1.4em;
+  font-weight: 700;
+}
+.onemind-markdown-editor .milkdown .ProseMirror h3 {
+  margin: 1.05em 0 0.3em;
+  font-size: 1.2em;
+  font-weight: 650;
+}
+.onemind-markdown-editor .milkdown .ProseMirror h4 {
+  margin: 0.95em 0 0.25em;
+  font-size: 1.05em;
+  font-weight: 650;
+}
+.onemind-markdown-editor .milkdown .ProseMirror h5 {
+  margin: 0.9em 0 0.25em;
+  font-size: 1em;
+  font-weight: 650;
+}
+.onemind-markdown-editor .milkdown .ProseMirror h6 {
+  margin: 0.9em 0 0.25em;
+  font-size: 0.95em;
+  font-weight: 650;
+  color: var(--color-text-secondary);
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror blockquote {
+  margin: 0.9em 0;
+  padding: 0.1em 0 0.1em 1em;
+  border-left: 3px solid var(--color-accent-primary);
+  color: var(--color-text-secondary);
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror blockquote p {
+  margin: 0.2em 0;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror code {
+  padding: 0.12em 0.35em;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-overlay);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  line-height: 1.45;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror pre {
+  margin: 0.9em 0;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  overflow: auto;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror a {
+  color: var(--color-accent-primary);
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror table {
+  width: 100%;
+  margin: 0.9em 0;
+  border-collapse: collapse;
+  table-layout: fixed;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror th,
+.onemind-markdown-editor .milkdown .ProseMirror td {
+  min-width: 96px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border-subtle);
+  vertical-align: top;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror th {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font-weight: 650;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror td {
+  background: color-mix(in srgb, var(--color-bg-elevated) 42%, transparent);
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror td > *,
+.onemind-markdown-editor .milkdown .ProseMirror th > * {
+  margin: 0;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror .selectedCell::after {
+  background: color-mix(in srgb, var(--color-accent-primary) 14%, transparent);
+  pointer-events: none;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror ::selection {
+  background: var(--color-accent-primary-glow);
+}
+
 .onemind-markdown-editor .milkdown {
   --crepe-color-background: var(--color-bg-base);
   --crepe-color-on-background: var(--color-text-primary);

@@ -1022,98 +1022,15 @@ body.float-note-shell #root {
   color: var(--color-text-primary);
   font-family: var(--font-ui);
   font-size: var(--md-editor-font-size, 18px);
-  line-height: 1.75;
+  line-height: 1.7;
 }
 .onemind-markdown-editor .milkdown {
   background: transparent;
   color: inherit;
 }
-.onemind-markdown-editor .editor {
-  outline: 0;
-  padding: 0 0 96px;
-}
-.onemind-markdown-editor .ProseMirror {
-  outline: 0;
-  min-height: 420px;
-  color: var(--color-text-primary);
-  caret-color: var(--color-accent-primary);
-}
-.onemind-markdown-editor .ProseMirror p {
-  margin: 0.7em 0;
-}
-.onemind-markdown-editor .ProseMirror h1,
-.onemind-markdown-editor .ProseMirror h2,
-.onemind-markdown-editor .ProseMirror h3 {
-  color: var(--color-text-primary);
-  letter-spacing: 0;
-  line-height: 1.28;
-}
-.onemind-markdown-editor .ProseMirror h1 { font-size: 30px; margin: 0 0 20px; }
-.onemind-markdown-editor .ProseMirror h2 { font-size: 24px; margin: 28px 0 14px; }
-.onemind-markdown-editor .ProseMirror h3 { font-size: 19px; margin: 24px 0 10px; }
-.onemind-markdown-editor .ProseMirror blockquote {
-  margin: 16px 0;
-  padding: 6px 0 6px 16px;
-  border-left: 3px solid var(--color-accent-primary);
-  color: var(--color-text-secondary);
-}
-.onemind-markdown-editor .ProseMirror code {
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-overlay);
-  color: var(--color-text-primary);
-  padding: 2px 5px;
-  font-family: var(--font-mono);
-  font-size: 0.88em;
-}
-.onemind-markdown-editor .ProseMirror pre {
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--color-bg-elevated);
-  padding: 14px 16px;
-  overflow: auto;
-}
-.onemind-markdown-editor .ProseMirror pre code {
-  background: transparent;
-  padding: 0;
-}
-.onemind-markdown-editor .ProseMirror a {
-  color: var(--color-accent-primary);
-}
-.onemind-markdown-editor .ProseMirror table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 18px 0;
-  table-layout: fixed;
-  overflow: hidden;
-  border-radius: var(--radius-md);
-}
-.onemind-markdown-editor .ProseMirror th,
-.onemind-markdown-editor .ProseMirror td {
-  min-width: 96px;
-  min-height: 36px;
-  border: 1px solid var(--color-border-subtle);
-  padding: 8px 10px;
-  vertical-align: top;
-}
-.onemind-markdown-editor .ProseMirror th {
-  background: var(--color-bg-elevated);
-  color: var(--color-text-primary);
-  font-weight: 650;
-}
-.onemind-markdown-editor .ProseMirror td {
-  background: color-mix(in srgb, var(--color-bg-elevated) 42%, transparent);
-}
-.onemind-markdown-editor .ProseMirror td > *,
-.onemind-markdown-editor .ProseMirror th > * {
-  margin: 0;
-}
-.onemind-markdown-editor .ProseMirror .selectedCell::after {
-  background: color-mix(in srgb, var(--color-accent-primary) 14%, transparent);
-  pointer-events: none;
-}
-.onemind-markdown-editor .ProseMirror ::selection {
-  background: var(--color-accent-primary-glow);
-}
+/* Note body typography (paragraphs, lists, headings, quotes, inline code,
+   tables) lives in styles/milkdown-adapter.css, the stylesheet evaluated
+   after every Milkdown package stylesheet. */
 .markdown-slash-menu {
   position: fixed;
   z-index: 1500;
@@ -1430,6 +1347,10 @@ body.float-note-shell #root {
   overflow: hidden;
   background: var(--color-bg-base);
 }
+.onemind-markdown-editor .milkdown-code-block .preview:has(.markdown-mermaid-viewport),
+.onemind-markdown-editor .milkdown-code-block .preview:has(.markdown-mermaid-preview) {
+  min-height: 0;
+}
 .onemind-markdown-editor .milkdown-code-block .preview-divider,
 .onemind-markdown-editor .milkdown-code-block .preview-label {
   display: none;
@@ -1449,15 +1370,21 @@ body.float-note-shell #root {
 .onemind-markdown-editor .milkdown-code-block .codemirror-host .cm-scroller {
   overflow: auto;
 }
+/* Mermaid diagram viewport: height follows the fitted diagram (capped so
+   oversized diagrams scroll instead of stretching the page). Padding and
+   max-height mirror the MERMAID_* constants in MarkdownEditor.tsx. */
 .onemind-markdown-editor .milkdown-code-block .markdown-mermaid-viewport {
   display: block;
   width: 100%;
-  height: clamp(420px, 58vh, 760px);
+  height: auto;
+  min-height: 200px;
+  max-height: min(64vh, 680px);
   overflow: auto;
-  padding: 28px;
+  padding: 24px;
   cursor: default;
   touch-action: pan-x pan-y;
   user-select: none;
+  scrollbar-gutter: stable;
 }
 .onemind-markdown-editor .milkdown-code-block .markdown-mermaid-viewport[data-zoomed="true"] {
   cursor: grab;
@@ -1468,9 +1395,8 @@ body.float-note-shell #root {
 .onemind-markdown-editor .milkdown-code-block .markdown-mermaid-canvas {
   display: flex;
   min-width: 100%;
-  min-height: 100%;
-  align-items: flex-start;
-  justify-content: flex-start;
+  align-items: center;
+  justify-content: center;
 }
 .onemind-markdown-editor .milkdown-code-block .markdown-mermaid-canvas svg {
   width: auto;
