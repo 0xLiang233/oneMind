@@ -1,3 +1,4 @@
+import "../styles/workbench-settings.css"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { AlertTriangle, Check, ChevronDown, FilePlus, GitBranch, MoveRight, PenLine, RefreshCw, Trash2 } from "../icons"
 
@@ -366,7 +367,7 @@ export function SyncSettingsPanel({
   const operationLabel = localAction ? actionLabels[localAction] : phaseLabels[status.phase] || ""
 
   return (
-    <div className="sync-settings-panel" aria-busy={isBusy}>
+    <div className="sync-settings-panel workbench-sync" aria-busy={isBusy}>
       <div className={`sync-operation-track ${operationLabel ? "active" : ""}`} role="status" aria-live="polite">
         {operationLabel ? <LoadingLabel label={operationLabel} /> : <span aria-hidden="true">同步操作就绪</span>}
       </div>
@@ -375,7 +376,7 @@ export function SyncSettingsPanel({
           <div className="sync-setup-heading">
             <div className="sync-setup-icon" aria-hidden="true"><GitBranch size={18} /></div>
             <div>
-              <div className="notes-panel-title">连接私有同步仓库</div>
+              <h2 className="settings-section-title">连接私有同步仓库</h2>
               <p>先完成本机检查，再初始化当前工作区。登录信息由系统 Git 安全保存。</p>
             </div>
           </div>
@@ -528,7 +529,7 @@ export function SyncSettingsPanel({
         <>
           <div className="settings-row sync-status-row">
             <div className="sync-status-copy">
-              <div className="notes-panel-title">同步状态</div>
+              <h2 className="settings-section-title">同步状态</h2>
               <p>{statusLabel(status)}</p>
               {(error || status.message) && status.phase !== "idle" ? <p className="sync-error-detail">{error || status.message}</p> : null}
             </div>
@@ -569,7 +570,7 @@ export function SyncSettingsPanel({
                   <RefreshCw size={14} aria-hidden="true" />
                 </button>
               </div>
-              <div className="sync-change-filters" aria-label="筛选变更类型">
+              <div className="sync-change-filters" role="group" aria-label="筛选变更类型">
                 <button type="button" className={effectiveChangeFilter === "all" ? "active" : ""} aria-pressed={effectiveChangeFilter === "all"} onClick={() => setChangeFilter("all")}>全部 <span>{changes.length}</span></button>
                 {changeKinds.filter((kind) => changeCounts[kind] > 0).map((kind) => (
                   <button key={kind} type="button" className={effectiveChangeFilter === kind ? "active" : ""} aria-pressed={effectiveChangeFilter === kind} onClick={() => setChangeFilter(kind)}>{changeLabels[kind]} <span>{changeCounts[kind]}</span></button>
@@ -647,13 +648,14 @@ export function SyncSettingsPanel({
             </div>
           ) : null}
 
+          <h2 className="settings-section-title settings-section-spaced">同步偏好</h2>
           <div className="settings-row">
-            <div><div className="notes-panel-title">启用同步</div><p>按计划自动提交、拉取并推送当前工作区。</p></div>
-            <button type="button" className={draft.enabled ? "settings-toggle active" : "settings-toggle"} aria-label="启用同步" aria-pressed={draft.enabled} disabled={isBusy} onClick={() => void updateConfig({ ...draft, enabled: !draft.enabled })} />
+            <div><div className="settings-label">启用同步</div><p>按计划自动提交、拉取并推送当前工作区。</p></div>
+            <button type="button" className={draft.enabled ? "settings-toggle active" : "settings-toggle"} role="switch" aria-label="启用同步" aria-checked={draft.enabled} disabled={isBusy} onClick={() => void updateConfig({ ...draft, enabled: !draft.enabled })} />
           </div>
 
           <div className="settings-row settings-row-stack">
-            <div><div className="notes-panel-title">远程仓库</div><p>更改地址前请先测试登录和访问权限。</p></div>
+            <div><div className="settings-label">远程仓库</div><p>更改地址前请先测试登录和访问权限。</p></div>
             <div className="sync-repository-fields">
               <input className="convert-input" value={draft.remoteUrl} disabled={isBusy} onChange={(event) => { setDraft({ ...draft, remoteUrl: event.target.value }); setRemoteCheck(null) }} aria-label="远程仓库地址" spellCheck={false} />
               <label className="sync-branch-field"><GitBranch size={15} aria-hidden="true" /><input className="convert-input" value={draft.branch} disabled={isBusy} onChange={(event) => setDraft({ ...draft, branch: event.target.value })} aria-label="同步分支" spellCheck={false} /></label>
@@ -662,13 +664,13 @@ export function SyncSettingsPanel({
           </div>
 
           <div className="settings-row">
-            <div><div className="notes-panel-title">自动同步</div><p>仅在应用运行且工作区已配置时执行。</p></div>
-            <select className="settings-select" value={draft.autoSyncIntervalMinutes} disabled={isBusy} onChange={(event) => void updateConfig({ ...draft, autoSyncIntervalMinutes: Number(event.target.value) })}>{intervals.map((interval) => <option key={interval.value} value={interval.value}>{interval.label}</option>)}</select>
+            <div><div className="settings-label">自动同步</div><p>仅在应用运行且工作区已配置时执行。</p></div>
+            <select className="settings-select" aria-label="自动同步间隔" value={draft.autoSyncIntervalMinutes} disabled={isBusy} onChange={(event) => void updateConfig({ ...draft, autoSyncIntervalMinutes: Number(event.target.value) })}>{intervals.map((interval) => <option key={interval.value} value={interval.value}>{interval.label}</option>)}</select>
           </div>
 
           <div className="settings-row">
-            <div><div className="notes-panel-title">启动时同步</div><p>打开工作区后自动获取其他设备的更改。</p></div>
-            <button type="button" className={draft.pullOnStartup ? "settings-toggle active" : "settings-toggle"} aria-label="启动时同步" aria-pressed={draft.pullOnStartup} disabled={isBusy} onClick={() => void updateConfig({ ...draft, pullOnStartup: !draft.pullOnStartup })} />
+            <div><div className="settings-label">启动时同步</div><p>打开工作区后自动获取其他设备的更改。</p></div>
+            <button type="button" className={draft.pullOnStartup ? "settings-toggle active" : "settings-toggle"} role="switch" aria-label="启动时同步" aria-checked={draft.pullOnStartup} disabled={isBusy} onClick={() => void updateConfig({ ...draft, pullOnStartup: !draft.pullOnStartup })} />
           </div>
 
           <div className="sync-settings-actions">

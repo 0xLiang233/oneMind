@@ -1,0 +1,329 @@
+/* Writing surfaces share the shell's paper; no additional page/card chrome.
+   Explicit view scopes keep these overrides independent of global CSS order. */
+/* Notes fill the paper. Only the document has a reading width; never size
+   the workspace from its contents or share Capture's centered flex layout. */
+.writing-notes.notes-workspace-page {
+  container: notes / inline-size;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.writing-notes .md-workspace {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.writing-notes .md-editor-toolbar {
+  min-width: 0;
+  min-height: 52px;
+  gap: 16px;
+  padding: 10px 24px;
+  border: 0;
+  background: transparent;
+}
+.writing-notes .notes-editor-title-group { flex: 1; gap: 8px; }
+.writing-notes .notes-editor-title-group > svg { flex: none; width: 16px; height: 16px; color: var(--color-text-tertiary); stroke-width: 1.5; }
+.writing-notes .md-document-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; line-height: 1.5; }
+.writing-notes .notes-editor-actions { flex: none; gap: 12px; }
+.writing-notes .notes-status { display: flex; align-items: center; gap: 5px; min-width: 0; max-width: 200px; font-size: 11px; line-height: 1.5; }
+.writing-notes .notes-status > svg { flex: none; width: 13px; height: 13px; stroke-width: 1.5; }
+.writing-notes .notes-status > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.writing-notes .notes-mode-button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  box-shadow: none;
+  line-height: 1;
+}
+.writing-notes .notes-mode-button:hover:not(:disabled),
+.writing-notes .notes-mode-button[aria-pressed="true"] { background: var(--color-bg-hover); color: var(--color-text-primary); }
+.writing-notes .notes-mode-button > svg { display: block; width: 16px; height: 16px; stroke-width: 1.5; }
+.writing-notes .notes-mode-button:disabled { opacity: 0.4; cursor: default; }
+.writing-notes .md-editor-stage { min-width: 0; scrollbar-gutter: stable both-edges; }
+.writing-notes :is(.writing-editor, .notes-source-editor, .notes-empty) {
+  display: block;
+  width: calc(100% - clamp(48px, 6cqw, 128px));
+  max-width: none;
+  min-width: 0;
+  margin: 28px auto 0;
+}
+.writing-notes .writing-editor { min-height: calc(100% - 28px); }
+.writing-notes .notes-source-editor { min-height: calc(100% - 56px); padding: 0 0 48px; font-size: var(--md-editor-font-size, 15px); line-height: 1.8; }
+.writing-notes .notes-source-editor:focus-visible { outline: none; }
+.writing-notes .notes-empty { padding: 0; font-size: 13px; line-height: 1.8; }
+@container notes (max-width: 620px) {
+  .writing-notes .md-editor-toolbar { padding-inline: 16px; gap: 8px; }
+  .writing-notes .notes-status { max-width: 100px; }
+  .writing-notes .notes-editor-actions { gap: 8px; }
+  .writing-notes :is(.writing-editor, .notes-source-editor, .notes-empty) { width: calc(100% - 40px); margin-top: 20px; }
+}
+/* Capture is one scrolling reading surface, not a tall composer above a nested list. */
+.writing-capture.quicknote-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  min-height: 0;
+  padding: 24px 0 40px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.writing-capture .quicknote-topbar,
+.writing-capture .quicknote-composer-inline,
+.writing-capture .quicknote-timeline,
+.writing-capture .batch-bar {
+  box-sizing: border-box;
+  flex: none;
+  width: min(720px, calc(100% - 48px));
+  margin: 0;
+}
+.writing-capture .quicknote-topbar { min-height: 28px; padding: 0; gap: 12px; }
+.writing-capture .quicknote-heading { display: flex; align-items: baseline; gap: 12px; }
+.writing-capture .quicknote-title { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.4; letter-spacing: -0.3px; }
+.writing-capture .quicknote-count { margin: 0; font-size: 12px; font-weight: 400; line-height: 1.6; }
+.writing-capture .quicknote-select-button,
+.writing-capture .quick-card-expand,
+.writing-capture .quick-card-menu {
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  box-shadow: none;
+}
+.writing-capture :is(.quicknote-select-button, .quick-card-expand, .quick-card-menu):hover:not(:disabled),
+.writing-capture .quicknote-select-button[aria-pressed="true"],
+.writing-capture .quick-card-menu[aria-expanded="true"] { background: var(--color-bg-hover); color: var(--color-text-primary); }
+.writing-capture .quicknote-composer-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 16px;
+  background: transparent;
+  box-shadow: none;
+}
+.writing-capture .quicknote-composer-inline:focus-within { border-color: var(--color-text-tertiary); box-shadow: none; }
+.writing-capture .quicknote-composer-inline:has(textarea:focus-visible) { border-color: var(--color-text-secondary); }
+/* JS measures scrollHeight; CSS caps growth without leaving a manual resize handle. */
+.writing-capture textarea.quicknote-inline-input {
+  box-sizing: border-box;
+  flex: none;
+  width: 100%;
+  min-width: 0;
+  min-height: 26px;
+  max-height: min(180px, 28vh);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 26px;
+  resize: none;
+  overflow-y: auto;
+}
+.writing-capture textarea.quicknote-inline-input,
+.writing-capture textarea.quicknote-inline-input:is(:focus, :focus-visible) { border: 0; background: transparent; outline: none; box-shadow: none; }
+.writing-capture .quicknote-composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.writing-capture .quicknote-composer-messages { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
+.writing-capture .quicknote-composer-hint,
+.writing-capture .quicknote-composer-status { color: var(--color-text-tertiary); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.writing-capture .quicknote-composer-status:empty { display: none; }
+.writing-capture .quicknote-save-button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--color-text-primary);
+  color: var(--color-bg-base);
+  box-shadow: none;
+}
+.writing-capture .quicknote-save-button:hover:not(:disabled) { transform: none; filter: none; opacity: 0.8; }
+.writing-capture .quicknote-save-button:disabled { background: var(--color-bg-hover); color: var(--color-text-tertiary); opacity: 1; cursor: default; }
+.writing-capture .quicknote-timeline { padding: 4px 0 0; overflow: visible; scrollbar-gutter: auto; gap: 22px; }
+.writing-capture .quicknote-date-group { gap: 0; }
+.writing-capture .date-group-header { margin: 0; padding: 0 0 4px; color: var(--color-text-secondary); font-size: 12px; font-weight: 500; line-height: 1.7; }
+.writing-capture .quick-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 28px;
+  align-items: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 0;
+  border: 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  transition: none;
+  cursor: default;
+}
+.writing-capture .quick-card:hover { border-color: var(--color-border-subtle); background: transparent; box-shadow: none; transform: none; }
+.writing-capture .quick-card:last-child { border-bottom: 0; }
+.writing-capture .quick-card.selected { border-color: var(--color-border-subtle); background: var(--color-bg-hover); }
+.writing-capture .quicknote-timeline--select-mode .quick-card { cursor: pointer; }
+.writing-capture .quick-card-leading { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding-top: 4px; }
+.writing-capture .quick-card-time { font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums; line-height: 20px; }
+.writing-capture .quick-card-checkbox-native { position: static; width: 15px; height: 15px; margin: 0; accent-color: var(--color-text-secondary); }
+.writing-capture .quick-card-body { min-width: 0; }
+.writing-capture .quick-card-content { min-width: 0; min-height: 0; font-size: var(--md-editor-font-size, 15px); line-height: 1.8; overflow-wrap: anywhere; }
+/* Five rendered lines, matching CaptureEntry's measured overflow threshold. */
+.writing-capture .quick-card-content--collapsed { max-height: 9em; overflow: hidden; }
+.writing-capture .quick-card-text { white-space: pre-wrap; font: inherit; overflow-wrap: anywhere; }
+.writing-capture .quick-card-expand { margin-top: 5px; padding-inline: 0; }
+.writing-capture .quick-card-menu { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; color: var(--color-text-tertiary); }
+.writing-capture .quick-card-menu:disabled { opacity: 0.4; }
+.writing-capture .notes-empty { padding: 16px 0; font-size: 13px; line-height: 1.8; }
+/* A sticky utility row keeps batch actions reachable without a floating card. */
+.writing-capture .batch-bar {
+  position: sticky;
+  top: 0;
+  left: auto;
+  bottom: auto;
+  z-index: 2;
+  max-width: none;
+  padding: 8px 0;
+  gap: 8px;
+  flex-wrap: wrap;
+  transform: none;
+  border: 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+  border-radius: 0;
+  background: var(--color-bg-base);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.writing-capture .batch-count { margin-right: auto; }
+.writing-capture .convert-panel { border: 1px solid var(--color-border-subtle); border-radius: 14px; background: var(--color-bg-base); }
+.writing-capture .convert-preview { background: transparent; box-shadow: none; }
+.writing-capture .convert-overlay { padding: 16px; background: rgb(0 0 0 / 28%); }
+.writing-capture .convert-panel {
+  width: min(480px, 100%);
+  max-height: calc(100dvh - 32px);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgb(0 0 0 / 12%);
+}
+.writing-capture .convert-header { padding: 20px 24px 16px; }
+.writing-capture .writing-dialog-eyebrow { margin-bottom: 4px; color: var(--color-text-tertiary); font-size: 11px; }
+.writing-capture .notes-panel-title { font-size: 16px; font-weight: 600; line-height: 1.5; }
+.writing-capture .convert-body { min-height: 0; overflow: auto; padding: 20px 24px; gap: 20px; }
+.writing-capture .convert-footer { padding: 16px 24px 20px; flex-wrap: wrap; }
+.writing-capture .convert-input { background: transparent; border-radius: 8px; box-shadow: none; }
+.writing-capture .convert-input:focus { border-color: var(--color-text-secondary); }
+.writing-capture .convert-input:focus-visible { outline: 1px solid var(--color-text-secondary); outline-offset: 2px; }
+.writing-capture .convert-preview-content {
+  padding: 8px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 14px;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+}
+
+/* Keep FloatNote's measured header, mode-wheel and drag geometry intact. */
+.writing-float.float-note-page .float-note-palette {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 14px;
+  background: var(--color-bg-base);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 8%);
+}
+.writing-float .float-note-input { font-family: var(--font-ui); font-size: 16px; }
+.writing-float .float-note-palette:focus-within { border-color: var(--color-text-tertiary); }
+.writing-float .float-note-palette:has(textarea:focus-visible) { border-color: var(--color-text-secondary); }
+.writing-float textarea.float-note-input,
+.writing-float textarea.float-note-input:is(:focus, :focus-visible) {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+}
+.writing-float .float-note-save-indicator.saving { border-color: var(--color-border-subtle); border-top-color: var(--color-text-secondary); }
+.writing-float .float-note-save-indicator.saved { color: var(--color-text-secondary); }
+.writing-float .float-note-result-icon,
+.writing-float .float-note-app-icon { background: var(--color-bg-hover); color: var(--color-text-secondary); }
+.writing-float .float-note-hint-bar { border-color: var(--color-border-subtle); background: transparent; }
+.writing-float .float-note-toast { color: var(--color-text-secondary); font-size: 12px; }
+.writing-float .float-note-section-title,
+.writing-float .float-note-hint-bar { color: var(--color-text-tertiary); font-weight: 400; }
+.writing-float .float-note-result,
+.writing-float .float-note-app-tile { border-radius: 8px; box-shadow: none; }
+.writing-float .float-note-result:hover,
+.writing-float .float-note-result.active,
+.writing-float .float-note-app-tile:hover,
+.writing-float .float-note-app-tile.active { background: var(--color-bg-hover); color: var(--color-text-primary); }
+.writing-float .float-note-result-copy small { color: var(--color-text-tertiary); }
+
+/* Menu geometry stays aligned with MarkdownEditor's viewport calculations. */
+.writing-editor.onemind-markdown-editor { min-width: 0; font-family: var(--font-ui); font-size: var(--md-editor-font-size, 15px); line-height: 1.9; }
+.writing-editor .markdown-slash-menu { background: var(--color-bg-base); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / 10%); }
+.writing-editor .markdown-slash-menu button span { font-weight: 500; }
+.writing-editor .markdown-properties-panel { background: transparent; box-shadow: none; border-radius: 0; }
+.writing-editor.onemind-markdown-editor .milkdown-code-block { box-shadow: none; background: var(--color-bg-surface); }
+.writing-editor.onemind-markdown-editor .milkdown-code-block .tools { background: transparent; }
+:is(.writing-notes, .writing-capture, .writing-float, .writing-editor) button:focus-visible {
+  outline: 2px solid var(--color-text-secondary);
+  outline-offset: 2px;
+}
+@media (max-width: 640px) {
+  .writing-capture .quicknote-topbar,
+  .writing-capture .quicknote-composer-inline,
+  .writing-capture .quicknote-timeline,
+  .writing-capture .batch-bar { width: calc(100% - 32px); }
+  .writing-capture.quicknote-page { padding-top: 18px; }
+}
+@media (max-width: 420px) {
+  .writing-capture .quick-card { grid-template-columns: 36px minmax(0, 1fr) 28px; gap: 8px; }
+  .writing-capture .convert-header, .writing-capture .convert-body, .writing-capture .convert-footer { padding-inline: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .writing-capture .quick-card,
+  .writing-float .float-note-mode-wheel-track { transition: none; }
+  .writing-float .float-note-save-indicator.saved { animation: none; }
+}
+@media (forced-colors: active) {
+  .writing-capture .quicknote-composer-inline:focus-within,
+  .writing-float .float-note-palette:focus-within { border-color: Highlight; }
+}
+
+
+/* Use the code block's existing toolbar; do not spend a second row on chrome. */
+.writing-editor.onemind-markdown-editor .milkdown-code-block .markdown-mermaid-expand { display: inline-flex; align-items: center; justify-content: center; gap: 5px; flex: none; height: 26px; min-height: 0; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-secondary); box-shadow: none; font: inherit; font-size: 11px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+.writing-editor.onemind-markdown-editor .milkdown-code-block .markdown-mermaid-expand:hover { background: var(--color-bg-hover); color: var(--color-text-primary); }
+.writing-editor .markdown-mermaid-expand svg { flex: none; }
+.writing-editor .markdown-slash-menu { max-height: min(332px, calc(100dvh - 16px)); }
+@container notes (max-width: 520px) {
+  .writing-editor .markdown-mermaid-expand span { display: none; }
+  .writing-editor.onemind-markdown-editor .milkdown-code-block .tools-button-group { gap: 3px; }
+}

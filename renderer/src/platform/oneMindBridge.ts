@@ -79,6 +79,7 @@ export function installOneMindBridgeFallback() {
       bridgeReady: false
     },
     window: {
+      openExternal: () => unsupported<boolean>("Opening external links"),
       minimize: () => Promise.resolve(),
       toggleMaximize: () => Promise.resolve(),
       close: () => Promise.resolve(),

@@ -7,12 +7,22 @@
  */
 
 /* ===== Note body typography & rhythm ===== */
+.onemind-markdown-editor .milkdown .ProseMirror a[href] {
+  color: var(--color-accent-primary);
+  cursor: pointer;
+}
+
+.onemind-markdown-editor .milkdown .ProseMirror a[href]:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .onemind-markdown-editor .milkdown .ProseMirror {
   min-height: 420px;
   padding: 0 0 96px;
   outline: 0;
   color: var(--color-text-primary);
-  caret-color: var(--color-accent-primary);
+  caret-color: var(--color-text-primary);
 }
 
 .onemind-markdown-editor .milkdown .ProseMirror p {
@@ -437,4 +447,110 @@
   .onemind-markdown-editor .milkdown .onemind-image-resize-handle {
     transition: none;
   }
+}
+
+/* Quiet workbench typography; retain all extension and image interactions. */
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror {
+  font-family: var(--font-ui);
+  font-size: inherit;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+}
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror :is(h1, h2, h3, h4, h5, h6) {
+  font-weight: 600;
+  line-height: 1.5;
+}
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror h1 { font-size: 1.733em; line-height: 1.4; letter-spacing: -0.02em; }
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror h2 { font-size: 1.267em; margin: 1.63em 0 0.63em; }
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror p { margin-block: 0.8em; }
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror > :first-child { margin-top: 0; }
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror blockquote {
+  border-left-color: var(--color-border-subtle);
+  background: transparent;
+  border-radius: 0;
+}
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror pre {
+  border-radius: 8px;
+  background: var(--color-bg-surface);
+  box-shadow: none;
+}
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror li p { margin-block: 0.15em; }
+
+/* Owned here rather than in legacy shell themes: rich edit and readonly previews
+   use the same body/link rules. Selection, resize and menu geometry stay intact. */
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror a[href] {
+  color: var(--color-link, #3477ce);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+[data-theme="dark"] .writing-editor.onemind-markdown-editor .milkdown .ProseMirror a[href] {
+  color: var(--color-link, #8ab9f8);
+}
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror a[href]:hover { text-decoration-color: currentColor; }
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror a[href]:focus-visible {
+  outline: 2px solid var(--color-text-secondary);
+  outline-offset: 3px;
+}
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror blockquote {
+  margin-block: 22px;
+  padding: 4px 0 4px 18px;
+}
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror li { margin-block: 7px; }
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror hr {
+  margin: 28px 0;
+  border: 0;
+  border-top: 1px solid var(--color-border-subtle);
+}
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror :is(th, td) {
+  padding: 11px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: 0.867em;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror th { background: var(--color-bg-hover); color: var(--color-text-secondary); font-weight: 550; }
+.writing-editor.onemind-markdown-editor .milkdown .ProseMirror td { background: transparent; }
+.writing-editor.onemind-markdown-editor .milkdown {
+  --crepe-color-primary: var(--color-text-primary);
+  --crepe-color-secondary: var(--color-bg-hover);
+  --crepe-color-selected: var(--color-bg-selected, var(--color-bg-hover));
+}
+.writing-editor.onemind-markdown-editor .milkdown-code-block :is(.language-button, .copy-button, .preview-toggle-button) {
+  font-weight: 500;
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  box-shadow: none;
+}
+.writing-editor.onemind-markdown-editor .milkdown-code-block .language-picker .list-wrapper {
+  border-radius: 10px;
+  background: var(--color-bg-base);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 10%);
+}
+.writing-editor.onemind-markdown-editor .milkdown-code-block .language-picker .search-box:focus-within,
+.writing-editor.onemind-markdown-editor .milkdown .onemind-image-rename-field:focus-within {
+  border-color: var(--color-text-secondary);
+  box-shadow: inset 0 0 0 1px var(--color-text-secondary);
+}
+.writing-editor.onemind-markdown-editor .milkdown-code-block .language-picker .search-input:focus-visible,
+.writing-editor.onemind-markdown-editor .milkdown .onemind-image-rename-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.writing-editor .markdown-properties-panel { margin: 0 0 24px; padding: 0 0 20px; border-bottom: 1px solid var(--color-border-subtle); }
+.writing-editor .markdown-property-row { align-items: start; }
+.writing-editor .markdown-property-key { font-weight: 400; }
+.writing-editor .markdown-property-value { min-width: 0; overflow-wrap: anywhere; }
+.writing-editor .markdown-property-tag { border: 0; border-radius: 5px; background: var(--color-bg-hover); font-weight: 400; }
+.writing-editor .markdown-property-tag-input { color: var(--color-text-secondary); }
+.writing-editor .markdown-property-tag-input:is(:hover, :focus) { background: var(--color-bg-hover); }
+.writing-editor :is(.markdown-property-input, .markdown-property-tag-input):focus-visible {
+  outline: 1px solid var(--color-text-secondary);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+@media (max-width: 640px) {
+  .writing-editor .markdown-property-row { grid-template-columns: minmax(64px, 96px) minmax(0, 1fr); gap: 10px; }
 }

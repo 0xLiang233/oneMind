@@ -1,25 +1,7 @@
+/* OneMind workbench tokens. Color belongs to content; navigation stays neutral.
+   Theme and user accent are independent, with one authoritative palette. */
 :root {
-  /* — Design System Tokens (OneMind: Raycast × Linear fusion, dark-first) — */
-
-  /* Background */
-  --color-bg-base: #0D0D0F;
-  --color-bg-elevated: #141417;
-  --color-bg-surface: #1C1C21;
-  --color-bg-overlay: #232329;
-  --color-bg-hover: #2A2A32;
-  --color-bg-selected: #2E2E3A;
-
-  /* Border */
-  --color-border-subtle: #1E1E24;
-  --color-border-default: #2C2C36;
-  --color-border-strong: #3A3A48;
-
-  /* Text */
-  --color-text-primary: #E4E4EC;
-  --color-text-secondary: #B0B0BE;
-  --color-text-tertiary: #8E8EA0;
-
-  /* Accent */
+  --color-border-strong: color-mix(in srgb, var(--color-text-primary) 24%, transparent);
   --color-text-on-accent: #FFFFFF;
   --color-accent-primary: #A78BFA;
   --color-accent-primary-hover: #8B5CF6;
@@ -30,67 +12,51 @@
   --color-accent-secondary: #38BDF8;
   --color-accent-secondary-hover: #0EA5E9;
   --color-accent-secondary-glow: rgba(56, 189, 248, 0.12);
-
-  /* Status */
   --color-success: #34D399;
   --color-warning: #FBBF24;
   --color-danger: #F87171;
   --color-info: #60A5FA;
-
-  /* Glass */
-  --glass-bg: rgba(20, 20, 23, 0.85);
+  --glass-bg: color-mix(in srgb, var(--color-bg-base) 92%, transparent);
   --glass-blur: blur(20px) saturate(180%);
-  --glass-border: rgba(255, 255, 255, 0.06);
-
-  /* Shadow */
-  --shadow-sm: 0 1px 4px rgba(0,0,0,0.3);
-  --shadow-md: 0 4px 16px rgba(0,0,0,0.4), 0 1px 4px rgba(0,0,0,0.2);
-  --shadow-lg: 0 8px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.3);
-  --shadow-ai: 0 0 20px rgba(56,189,248,0.12);
-  --shadow-color-soft: rgba(0,0,0,0.22);
-
-  /* Spacing */
-  --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
-  --space-4: 16px; --space-5: 20px; --space-6: 24px;
-  --space-8: 32px; --space-12: 48px;
-
-  /* Typography */
-  --font-ui: "Inter", "SF Pro Text", -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
-
-  /* Radius */
-  --radius-sm: 4px;   --radius-md: 6px;
-  --radius-lg: 8px;   --radius-xl: 10px;
+  --glass-border: var(--color-border-subtle);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 5%);
+  --shadow-md: 0 5px 20px rgb(0 0 0 / 9%);
+  --shadow-lg: 0 16px 48px rgb(0 0 0 / 18%);
+  --shadow-ai: none;
+  --shadow-color-soft: rgb(0 0 0 / 10%);
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  --font-mono: "Cascadia Code", Consolas, monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
   --radius-float: 14px;
-
-  /* Transitions */
   --transition-fast: 80ms ease;
   --transition-base: 120ms ease;
   --transition-smooth: 180ms cubic-bezier(0.2, 0.8, 0.3, 1.0);
-  --app-chrome-height: 40px;
   --tab-min-width: 72px;
   --tab-max-width: 180px;
-
-  /* Sidebar */
   --sidebar-expanded-width: 204px;
   --sidebar-collapsed-width: 48px;
   --sidebar-content-inset: 6px;
   --transition-sidebar-collapse: 200ms cubic-bezier(0.2, 0.8, 0.3, 1.0);
   --transition-sidebar-content: 150ms ease 50ms;
-
-  /* Palette */
   --palette-width: 640px;
-
-  /* Titlebar */
-  --color-titlebar-win-btn-hover: rgba(255, 255, 255, 0.08);
-  --color-titlebar-win-btn-active: rgba(255, 255, 255, 0.04);
+  --color-titlebar-win-btn-hover: var(--color-bg-hover);
+  --color-titlebar-win-btn-active: var(--color-bg-selected);
   --color-titlebar-win-close-hover: #E81123;
   --color-titlebar-win-close-active: #C50F1F;
-  --color-titlebar-win-icon: #9898A8;
-  --color-titlebar-win-icon-hover: #F0F0F5;
+  --color-titlebar-win-icon: var(--color-text-secondary);
+  --color-titlebar-win-icon-hover: var(--color-text-primary);
   --color-titlebar-win-close-icon-hover: #FFFFFF;
-
-  /* App surfaces */
   --color-titlebar-bg-start: var(--color-bg-base);
   --color-titlebar-bg-end: var(--color-bg-base);
   --color-sidebar-bg-start: var(--color-bg-elevated);
@@ -98,118 +64,47 @@
   --color-settings-sidebar-bg-start: var(--color-bg-elevated);
   --color-settings-sidebar-bg-end: var(--color-bg-elevated);
   --color-tree-active-bg: var(--color-bg-selected);
-  --color-contextmenu-bg: rgba(20, 20, 23, 0.94);
-  --color-contextmenu-border: rgba(255, 255, 255, 0.08);
-  --color-contextmenu-item-hover: var(--color-accent-primary-soft);
-  --color-contextmenu-item-active: var(--color-accent-primary-glow);
+  --color-contextmenu-bg: var(--color-bg-base);
+  --color-contextmenu-border: var(--color-border-subtle);
+  --color-contextmenu-item-hover: var(--color-bg-hover);
+  --color-contextmenu-item-active: var(--color-bg-selected);
   --color-contextmenu-shortcut: var(--color-text-tertiary);
   --color-contextmenu-separator: var(--color-border-subtle);
-  --color-contextmenu-ai-accent: var(--color-accent-secondary);
-  --color-contextmenu-ai-glow: var(--color-accent-secondary-glow);
+  --color-contextmenu-ai-accent: var(--color-text-secondary);
+  --color-contextmenu-ai-glow: var(--color-bg-hover);
   --color-contextmenu-danger: var(--color-danger);
   --color-contextmenu-danger-hover: color-mix(in srgb, var(--color-danger) 14%, transparent);
-
-  /* Accent option swatches */
   --color-accent-swatch-purple: #A78BFA;
   --color-accent-swatch-blue: #38BDF8;
   --color-accent-swatch-green: #34D399;
   --color-accent-swatch-orange: #FB923C;
+  --winui-link: var(--color-accent-primary);
+  --ease-out-soft: cubic-bezier(.22,.9,.3,1);
+  --shadow-overlay: 0 16px 48px rgb(0 0 0 / 18%);
+  color-scheme: dark;
 }
+:root {  --color-bg-base:#1b1c1f; --color-bg-elevated:#17191e; --color-bg-surface:#222429;
+  --color-bg-overlay:#292c32; --color-bg-hover:rgba(255,255,255,.055); --color-bg-selected:rgba(255,255,255,.09);
+  --color-text-primary:#ececef; --color-text-secondary:#b1b4bb; --color-text-tertiary:#9499a3;
+  --color-border-subtle:rgba(255,255,255,.085); --color-border-default:rgba(255,255,255,.15);
+  --workbench-shell:#171a20; --workbench-tint:rgba(25,28,34,.74); --workbench-wash:rgba(91,111,146,.14);
+  --app-chrome-height:42px; --winui-chrome:var(--workbench-shell);
+  --color-card-bg:var(--color-bg-base); --color-composer-bg:var(--color-bg-base);
+  --workbench-radius:16px;
+}
+:root[data-theme="light"] {  --color-bg-base:#fff; --color-bg-elevated:#f3f4f7; --color-bg-surface:#f8f9fa;
+  --color-bg-overlay:#f0f1f3; --color-bg-hover:rgba(26,28,31,.045); --color-bg-selected:rgba(26,28,31,.075);
+  --color-text-primary:#1a1c1f; --color-text-secondary:#646970; --color-text-tertiary:#777e88;
+  --color-border-subtle:rgba(26,28,31,.085); --color-border-default:rgba(26,28,31,.16);
+  --workbench-shell:#f1f3f7; --workbench-tint:rgba(243,245,249,.72); --workbench-wash:rgba(165,188,222,.18);}
+@media(prefers-color-scheme:light){:root:not([data-theme]){  --color-bg-base:#fff; --color-bg-elevated:#f3f4f7; --color-bg-surface:#f8f9fa;
+  --color-bg-overlay:#f0f1f3; --color-bg-hover:rgba(26,28,31,.045); --color-bg-selected:rgba(26,28,31,.075);
+  --color-text-primary:#1a1c1f; --color-text-secondary:#646970; --color-text-tertiary:#777e88;
+  --color-border-subtle:rgba(26,28,31,.085); --color-border-default:rgba(26,28,31,.16);
+  --workbench-shell:#f1f3f7; --workbench-tint:rgba(243,245,249,.72); --workbench-wash:rgba(165,188,222,.18);}}
 
-/* Light Mode Tokens */
-[data-theme="light"] {
-  --color-bg-base: #FFFFFF;
-  --color-bg-elevated: #F6F5FB;
-  --color-bg-surface: #F0EFF7;
-  --color-bg-overlay: #E8E7F1;
-  --color-bg-hover: #ECECF3;
-  --color-bg-selected: #E5E5EE;
-  --color-border-subtle: #E6E3EE;
-  --color-border-default: #D5D0E2;
-  --color-border-strong: #BDB5D1;
-  --color-text-primary: #17142B;
-  --color-text-secondary: #57516E;
-  --color-text-tertiary: #7A748B;
-  --color-accent-primary: #8B5CF6;
-  --color-accent-primary-hover: #7C3AED;
-  --color-accent-primary-glow: rgba(139, 92, 246, 0.16);
-  --color-accent-primary-soft: rgba(139, 92, 246, 0.09);
-  --color-accent-primary-ring: rgba(139, 92, 246, 0.32);
-  --color-accent-primary-shadow: rgba(139, 92, 246, 0.22);
-  --color-accent-secondary: #38BDF8;
-  --color-accent-secondary-hover: #0EA5E9;
-  --color-success: #10B981;
-  --color-warning: #D97706;
-  --color-danger: #EF4444;
-  --color-info: #3B82F6;
-  --glass-bg: rgba(255, 255, 255, 0.88);
-  --glass-border: rgba(0, 0, 0, 0.06);
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-  --shadow-md: 0 2px 8px rgba(0,0,0,0.08);
-  --shadow-lg: 0 8px 24px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.04);
-  --shadow-color-soft: rgba(23, 20, 43, 0.14);
-  --color-titlebar-bg-start: #FFFFFF;
-  --color-titlebar-bg-end: #F7F5FD;
-  --color-sidebar-bg-start: #FAF9FE;
-  --color-sidebar-bg-end: var(--color-bg-elevated);
-  --color-settings-sidebar-bg-start: var(--color-bg-elevated);
-  --color-settings-sidebar-bg-end: #F3F1FA;
-  --color-tree-active-bg: var(--color-bg-selected);
-  --color-contextmenu-bg: rgba(255, 255, 255, 0.96);
-  --color-contextmenu-border: rgba(23, 20, 43, 0.10);
-  --color-contextmenu-item-hover: var(--color-accent-primary-soft);
-  --color-contextmenu-item-active: var(--color-accent-primary-glow);
-  --color-contextmenu-shortcut: var(--color-text-tertiary);
-  --color-contextmenu-separator: var(--color-border-subtle);
-  --color-contextmenu-ai-accent: var(--color-accent-secondary);
-  --color-contextmenu-ai-glow: var(--color-accent-secondary-glow);
-  --color-contextmenu-danger: var(--color-danger);
-  --color-contextmenu-danger-hover: color-mix(in srgb, var(--color-danger) 10%, transparent);
-}
-
-/* System auto-detection */
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme]) {
-    --color-bg-base: #FFFFFF;
-    --color-bg-elevated: #F6F5FB;
-    --color-bg-surface: #F0EFF7;
-    --color-bg-overlay: #E8E7F1;
-    --color-bg-hover: #ECECF3;
-    --color-bg-selected: #E5E5EE;
-    --color-border-subtle: #E6E3EE;
-    --color-border-default: #D5D0E2;
-    --color-border-strong: #BDB5D1;
-    --color-text-primary: #17142B;
-    --color-text-secondary: #57516E;
-    --color-text-tertiary: #7A748B;
-    --color-accent-primary: #8B5CF6;
-    --color-accent-primary-hover: #7C3AED;
-    --color-accent-primary-glow: rgba(139, 92, 246, 0.16);
-    --color-accent-primary-soft: rgba(139, 92, 246, 0.09);
-    --color-accent-primary-ring: rgba(139, 92, 246, 0.32);
-    --color-accent-primary-shadow: rgba(139, 92, 246, 0.22);
-    --glass-bg: rgba(255, 255, 255, 0.88);
-    --glass-border: rgba(0, 0, 0, 0.06);
-    --shadow-color-soft: rgba(23, 20, 43, 0.14);
-    --color-titlebar-bg-start: #FFFFFF;
-    --color-titlebar-bg-end: #F7F5FD;
-    --color-sidebar-bg-start: #FAF9FE;
-    --color-sidebar-bg-end: var(--color-bg-elevated);
-    --color-settings-sidebar-bg-start: var(--color-bg-elevated);
-    --color-settings-sidebar-bg-end: #F3F1FA;
-    --color-tree-active-bg: var(--color-bg-selected);
-    --color-contextmenu-bg: rgba(255, 255, 255, 0.96);
-    --color-contextmenu-border: rgba(23, 20, 43, 0.10);
-    --color-contextmenu-item-hover: var(--color-accent-primary-soft);
-    --color-contextmenu-item-active: var(--color-accent-primary-glow);
-    --color-contextmenu-shortcut: var(--color-text-tertiary);
-    --color-contextmenu-separator: var(--color-border-subtle);
-    --color-contextmenu-ai-accent: var(--color-accent-secondary);
-    --color-contextmenu-ai-glow: var(--color-accent-secondary-glow);
-    --color-contextmenu-danger: var(--color-danger);
-    --color-contextmenu-danger-hover: color-mix(in srgb, var(--color-danger) 10%, transparent);
-  }
-}
+:root[data-theme="light"] { color-scheme: light; }
+@media (prefers-color-scheme: light) { :root:not([data-theme]) { color-scheme: light; } }
 
 :root[data-accent="purple"] {
   --color-accent-primary: #A78BFA;

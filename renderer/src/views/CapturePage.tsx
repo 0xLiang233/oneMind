@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import "../styles/workbench-writing.css"
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useOutletContext } from "react-router-dom"
 import { trackActivity } from "../activity"
-import { FilePlus, PenLine, Trash2 } from "../icons"
+import { ArrowUp, Check, FilePlus, Trash2 } from "../icons"
+import { ContextMenu } from "../shell/ContextMenu"
 
 type OutletContext = {
   workspace: WorkspaceMeta | null
@@ -16,10 +18,9 @@ function formatQuickNoteTime(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return "时间未知"
   return new Intl.DateTimeFormat("zh-CN", {
-    month: "numeric",
-    day: "numeric",
     hour: "2-digit",
-    minute: "2-digit"
+    minute: "2-digit",
+    hour12: false
   }).format(date)
 }
 
@@ -31,7 +32,10 @@ function formatDateGroup(value: string) {
   yesterday.setDate(today.getDate() - 1)
   if (date.toDateString() === today.toDateString()) return "今天"
   if (date.toDateString() === yesterday.toDateString()) return "昨天"
-  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(date)
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: date.getFullYear() === today.getFullYear() ? undefined : "numeric",
+    month: "numeric", day: "numeric"
+  }).format(date)
 }
 
 function buildSuggestedName(content: string) {
@@ -54,23 +58,58 @@ export function CapturePage() {
     name: string
   } | null>(null)
   const [batchConvertItems, setBatchConvertItems] = useState<QuickNote[] | null>(null)
-  const [status, setStatus] = useState("加载中...")
+  const [status, setStatus] = useState("")
+  const [loading, setLoading] = useState(true)
+  const [batchConverting, setBatchConverting] = useState(false)
+  const [conversionStatus, setConversionStatus] = useState("")
+  const [entryMenu, setEntryMenu] = useState<{
+    itemId: string; trigger: HTMLButtonElement; x: number; y: number
+  } | null>(null)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
+  const timelineRef = useRef<HTMLElement>(null)
+  const batchInFlightRef = useRef(false)
+  const convertInFlightRef = useRef(false)
+  const saveInFlightRef = useRef(false)
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
 
   const groupedItems = useMemo(() => {
-    const groups: Array<{ label: string; items: QuickNote[] }> = []
-    for (const item of items) {
-      const label = formatDateGroup(item.createdAt)
-      let group = groups.find(g => g.label === label)
+    const groups = new Map<string, { key: string; label: string; items: QuickNote[] }>()
+    const newestFirst = [...items].sort((a, b) =>
+      (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0))
+    for (const item of newestFirst) {
+      const date = new Date(item.createdAt)
+      // Full local dates keep different years separate even when labels look similar.
+      const key = Number.isNaN(date.getTime()) ? "unknown" : date.toDateString()
+      let group = groups.get(key)
       if (!group) {
-        group = { label, items: [] }
-        groups.push(group)
+        group = { key, label: formatDateGroup(item.createdAt), items: [] }
+        groups.set(key, group)
       }
       group.items.push(item)
     }
-    return groups
+    return [...groups.values()]
   }, [items])
+
+  useLayoutEffect(() => {
+    const input = composerRef.current
+    if (!input) return
+    function resize() {
+      if (!input) return
+      input.style.height = "auto"
+      input.style.height = input.scrollHeight + "px"
+    }
+    resize()
+    let previousWidth = input.clientWidth
+    const observer = new ResizeObserver(() => {
+      if (input.clientWidth !== previousWidth) {
+        previousWidth = input.clientWidth
+        resize()
+      }
+    })
+    observer.observe(input)
+    return () => observer.disconnect()
+  }, [content])
 
   const exitSelectMode = useCallback(() => {
     setSelectMode(false)
@@ -78,10 +117,12 @@ export function CapturePage() {
   }, [])
 
   const handleConfirmConvert = useCallback(async () => {
-    if (!workspace || !convertDraft) return
+    if (!workspace || !convertDraft || convertingId || convertInFlightRef.current) return
     const name = convertDraft.name.trim()
-    if (!name) { setStatus("请先填写正文笔记名称。"); return }
+    if (!name) { setConversionStatus("请先填写正文笔记名称。"); return }
+    convertInFlightRef.current = true
     setConvertingId(convertDraft.item.id)
+    setConversionStatus("")
     try {
       const filePath = await window.oneMind.notes.createFromQuickNote(
         workspace.workspacePath, convertDraft.relativeDir, name, convertDraft.item.content
@@ -96,55 +137,83 @@ export function CapturePage() {
       setConvertDraft(null)
       setStatus("已从随记创建正文笔记。")
       navigate("/notes?selected=" + encodeURIComponent(filePath))
-    } finally { setConvertingId(null) }
-  }, [convertDraft, navigate, workspace])
+    } catch {
+      setConversionStatus("创建失败，原随记已保留，请重试。")
+    } finally { convertInFlightRef.current = false; setConvertingId(null) }
+  }, [convertDraft, convertingId, navigate, workspace])
 
   const handleBatchConvert = useCallback(async () => {
-    if (!workspace || !batchConvertItems) return
-    // Convert each selected quick note to a note file
+    if (!workspace || !batchConvertItems || batchInFlightRef.current) return
+    batchInFlightRef.current = true
+    setBatchConverting(true)
+    setConversionStatus("")
+    const failed: QuickNote[] = []
     let convertedCount = 0
-    for (const item of batchConvertItems) {
-      try {
-        await window.oneMind.notes.createFromQuickNote(
-          workspace.workspacePath, "", buildSuggestedName(item.content), item.content
-        )
-        convertedCount += 1
-      } catch (e) {
-        console.error("Failed to convert:", item.id, e)
+    try {
+      for (const item of batchConvertItems) {
+        try {
+          await window.oneMind.notes.createFromQuickNote(
+            workspace.workspacePath, "", buildSuggestedName(item.content), item.content
+          )
+          convertedCount += 1
+        } catch {
+          failed.push(item)
+        }
       }
+      if (convertedCount > 0) {
+        trackActivity(workspace.workspacePath, {
+          module: "quickNote", action: "convert", targetType: "note",
+          targetLabel: "批量转正文 " + convertedCount + " 条",
+          metadata: { count: convertedCount }
+        })
+      }
+      // Creating note files does not delete or hide original captures.
+      // Retry only failed items so successful note files aren't duplicated.
+      if (failed.length > 0) {
+        setBatchConvertItems(failed)
+        setSelectedIds(failed.map(item => item.id))
+        setConversionStatus("已创建 " + convertedCount + " 篇正文，" + failed.length + " 条失败。原随记均已保留，可重试失败项。")
+      } else {
+        setBatchConvertItems(null)
+        setStatus("已创建 " + convertedCount + " 篇正文，原随记已保留。")
+        exitSelectMode()
+      }
+    } finally {
+      batchInFlightRef.current = false
+      setBatchConverting(false)
     }
-    if (convertedCount > 0) {
-      trackActivity(workspace.workspacePath, {
-        module: "quickNote",
-        action: "convert",
-        targetType: "note",
-        targetLabel: `批量转正文 ${convertedCount} 条`,
-        metadata: { count: convertedCount }
-      })
-    }
-    setBatchConvertItems(null)
-    setItems(prev => prev.filter(n => !batchConvertItems.map(b => b.id).includes(n.id)))
-    setStatus("已批量转为正文笔记。")
-    exitSelectMode()
   }, [batchConvertItems, exitSelectMode, workspace])
 
   useEffect(() => {
+    let cancelled = false
     async function loadQuickNotes() {
+      setLoading(true)
+      setStatus("")
+      setItems([])
+      setSelectedIds([])
+      setSelectMode(false)
+      setEntryMenu(null)
       if (!workspace) {
-        setItems([])
-        setStatus("请先选择或创建 workspace。")
+        setLoading(false)
         return
       }
-      const next = await window.oneMind.quickNotes.list(workspace.workspacePath)
-      setItems(next)
-      setStatus(next.length > 0 ? "本地 inbox 已加载。" : "还没有随记，先记录第一条。")
+      try {
+        const next = await window.oneMind.quickNotes.list(workspace.workspacePath)
+        if (!cancelled) setItems(next)
+      } catch {
+        if (!cancelled) setStatus("随记加载失败，请重新打开此页重试。")
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     }
     void loadQuickNotes()
+    return () => { cancelled = true }
   }, [workspace])
 
   useEffect(() => {
     if (!convertDraft) return
     function handleKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing || convertingId) return
       if (event.key === "Escape") { setConvertDraft(null); return }
       if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
         event.preventDefault()
@@ -153,11 +222,12 @@ export function CapturePage() {
     }
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [convertDraft, handleConfirmConvert])
+  }, [convertDraft, convertingId, handleConfirmConvert])
 
   useEffect(() => {
     if (!batchConvertItems) return
     function handleKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing || batchInFlightRef.current) return
       if (event.key === "Escape") { setBatchConvertItems(null); return }
       if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
         event.preventDefault()
@@ -171,13 +241,13 @@ export function CapturePage() {
   // Escape exits select mode
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && selectMode) {
+      if (event.key === "Escape" && selectMode && !batchConvertItems && !entryMenu) {
         exitSelectMode()
       }
     }
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [exitSelectMode, selectMode, selectedIds])
+  }, [batchConvertItems, entryMenu, exitSelectMode, selectMode])
 
   function toggleSelectItem(id: string) {
     setSelectedIds(prev =>
@@ -186,7 +256,8 @@ export function CapturePage() {
   }
 
   async function handleSave() {
-    if (!workspace || !content.trim() || saving) return
+    if (!workspace || !content.trim() || saving || loading || saveInFlightRef.current) return
+    saveInFlightRef.current = true
     setSaving(true)
     try {
       const created = await window.oneMind.quickNotes.create(workspace.workspacePath, content)
@@ -198,9 +269,13 @@ export function CapturePage() {
         targetLabel: content.split("\n")[0].trim().slice(0, 32) || "随记"
       })
       setItems(current => [created, ...current])
-      setContent("")
-      setStatus("随记已保存到 inbox。")
-    } finally { setSaving(false) }
+      setContent(current => current === content ? "" : current)
+      setStatus("已保存")
+      composerRef.current?.focus()
+      timelineRef.current?.closest(".writing-capture")?.scrollTo({ top: 0 })
+    } catch {
+      setStatus("保存失败，内容还在输入框中，请重试。")
+    } finally { saveInFlightRef.current = false; setSaving(false) }
   }
 
   async function handleConvertToNote(item: QuickNote) {
@@ -209,7 +284,10 @@ export function CapturePage() {
     try {
       const directories = await window.oneMind.notes.listDirectories(workspace.workspacePath)
       setDirectoryOptions(directories)
+      setConversionStatus("")
       setConvertDraft({ item, relativeDir: "", name: buildSuggestedName(item.content) })
+    } catch {
+      setStatus("无法读取笔记目录，请重试。")
     } finally { setConvertingId(null) }
   }
 
@@ -241,127 +319,135 @@ export function CapturePage() {
     }
   }
 
-  function handleBatchAiOrganize() {
-    if (selectedIds.length === 0) return
-    const selectedItems = items.filter(n => selectedIds.includes(n.id))
-    void (async () => {
-      const directories = await window.oneMind.notes.listDirectories(workspace!.workspacePath)
-      setDirectoryOptions(directories)
-      setBatchConvertItems(selectedItems)
-    })()
+  function handleBatchOrganize() {
+    if (!workspace || selectedIds.length === 0) return
+    setConversionStatus("")
+    setBatchConvertItems(items.filter(item => selectedIds.includes(item.id)))
   }
 
+  function openEntryMenu(item: QuickNote, trigger: HTMLButtonElement) {
+    const rect = trigger.getBoundingClientRect()
+    setEntryMenu(current => current?.itemId === item.id ? null : {
+      itemId: item.id, trigger, x: rect.right, y: rect.bottom + 4
+    })
+  }
+
+  const menuItem = items.find(item => item.id === entryMenu?.itemId)
+
   return (
-    <section className="page quicknote-page">
+    <section className="page quicknote-page writing-capture" onScroll={() => setEntryMenu(null)}>
       <header className="quicknote-topbar">
-        <div>
-          <div className="quicknote-title">随记</div>
-          <div className="quicknote-count">{items.length > 0 ? `${items.length} 条记录` : "空白收件箱"}</div>
+        <div className="quicknote-heading">
+          <h1 className="quicknote-title">随记</h1>
+          <span className="quicknote-count">{loading ? "加载中…" : items.length + " 条"}</span>
         </div>
+        {items.length > 0 && (
+          <button type="button" className="quicknote-select-button" aria-pressed={selectMode}
+            disabled={batchConverting}
+            onClick={() => { setEntryMenu(null); if (selectMode) exitSelectMode(); else setSelectMode(true) }}>
+            {selectMode ? "退出选择" : "选择"}
+          </button>
+        )}
       </header>
 
-      <section className="quicknote-composer-inline">
-        <div className="quicknote-composer-icon" aria-hidden="true">
-          <PenLine size={18} strokeWidth={1.8} />
-        </div>
+      <section className="quicknote-composer-inline" aria-label="写随记" aria-busy={saving}>
         <textarea
+          ref={composerRef}
           className="quicknote-inline-input"
+          aria-label="随记内容"
+          aria-describedby="quicknote-composer-hint"
+          rows={1}
           value={content}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="写下刚想到的内容..."
+          onChange={(event) => setContent(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+              event.preventDefault()
+              void handleSave()
+            }
+          }}
+          placeholder="记下一个想法、待办或片段…"
         />
-        <button type="button" className="quicknote-save-button" onClick={handleSave}
-          disabled={!workspace || !content.trim() || saving}>
-          {saving ? "保存中" : "保存"}
-        </button>
+        <div className="quicknote-composer-footer">
+          <div className="quicknote-composer-messages">
+            <span id="quicknote-composer-hint" className="quicknote-composer-hint">Ctrl+Enter 保存 · Enter 换行</span>
+            <span className="quicknote-composer-status" role="status">{saving ? "保存中…" : status}</span>
+          </div>
+          <button type="button" className="quicknote-save-button" onClick={() => void handleSave()}
+            disabled={!workspace || !content.trim() || saving || loading}
+            aria-label={saving ? "保存中" : "保存随记"} title="保存随记（Ctrl+Enter）">
+            <ArrowUp size={16} strokeWidth={2} aria-hidden="true" />
+          </button>
+        </div>
       </section>
 
-      <section className={"quicknote-timeline" + (selectMode ? " quicknote-timeline--select-mode" : "")}>
-        {groupedItems.length > 0 ? groupedItems.map(group => (
-          <div key={group.label} className="quicknote-date-group">
-            <div className="date-group-header">{group.label}</div>
+      {selectMode && (
+        <div className="batch-bar" role="group" aria-label="批量操作">
+          <span className="batch-count">已选 {selectedIds.length} 条</span>
+          <button type="button" className="secondary compact" disabled={batchConverting}
+            onClick={() => setSelectedIds(selectedIds.length === items.length ? [] : items.map(item => item.id))}>
+            {selectedIds.length === items.length ? "取消全选" : "全选"}
+          </button>
+          <button type="button" className="secondary compact" onClick={() => void handleBatchDelete()}
+            disabled={selectedIds.length === 0 || batchConverting}>删除</button>
+          <button type="button" className="compact" onClick={handleBatchOrganize}
+            disabled={selectedIds.length === 0 || batchConverting}>转为正文</button>
+        </div>
+      )}
+
+      <section ref={timelineRef} className={"quicknote-timeline" + (selectMode ? " quicknote-timeline--select-mode" : "")}
+        aria-label="随记记录" aria-busy={loading}>
+        {groupedItems.map(group => (
+          <section key={group.key} className="quicknote-date-group" aria-label={group.label}>
+            <h2 className="date-group-header">{group.label}</h2>
             {group.items.map(item => (
-              <article
-                key={item.id}
-                className={"quick-card" + (selectedIds.includes(item.id) ? " selected" : "")}
-                onClick={() => selectMode && toggleSelectItem(item.id)}
-              >
-                {selectMode && (
-                  <input
-                    className="quick-card-checkbox-native"
-                    type="checkbox"
-                    checked={selectedIds.includes(item.id)}
-                    onChange={() => toggleSelectItem(item.id)}
-                  />
-                )}
-                <div className="quick-card-content">{item.content}</div>
-                <div className="quick-card-meta">
-                  <span className="quick-card-time">{formatQuickNoteTime(item.createdAt)}</span>
-                  {item.content.length > 40 ? <span className="tag-chip--ai">+ AI 标记</span> : null}
-                </div>
-                {!selectMode && (
-                  <div className="quick-card-actions">
-                    <button
-                      type="button"
-                      className="quick-card-action quick-card-action--muted"
-                      onClick={(event) => { event.stopPropagation(); void handleDeleteItem(item) }}
-                      disabled={!workspace}
-                      title="删除"
-                      aria-label="删除"
-                    >
-                      <Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      className="quick-card-action"
-                      onClick={(event) => { event.stopPropagation(); void handleConvertToNote(item) }}
-                      disabled={!workspace || convertingId === item.id}
-                    >
-                      <FilePlus size={14} strokeWidth={1.8} aria-hidden="true" />
-                      {convertingId === item.id ? "创建中" : "转正文"}
-                    </button>
-                  </div>
-                )}
-              </article>
+              <CaptureEntry key={item.id} item={item} selectMode={selectMode}
+                selected={selectedIds.includes(item.id)} onSelect={() => toggleSelectItem(item.id)}
+                menuOpen={entryMenu?.itemId === item.id} onOpenMenu={openEntryMenu}
+                busy={convertingId === item.id} />
             ))}
+          </section>
+        ))}
+        {items.length === 0 && (
+          <div className="notes-empty">
+            {loading ? "正在读取随记…" : !workspace ? "先选择或创建工作区，再开始记录。" : status || "想到什么就记下来。之后可从记录菜单转为正文。"}
           </div>
-        )) : (
-          <div className="notes-empty">{status}</div>
         )}
       </section>
 
-      {/* Batch bar */}
-      {selectMode && (
-        <div className="batch-bar">
-          <span className="batch-count">已选 {selectedIds.length} 条</span>
-          <button type="button" className="secondary compact" onClick={handleBatchDelete}
-            disabled={selectedIds.length === 0}>
-            删除
-          </button>
-          <button type="button" className="compact" onClick={handleBatchAiOrganize}
-            disabled={selectedIds.length === 0}>
-            AI 整理为正文
-          </button>
-        </div>
+      {entryMenu && menuItem && (
+        <ContextMenu id="capture-entry-menu" ariaLabel="随记操作" trigger={entryMenu.trigger}
+          x={entryMenu.x} y={entryMenu.y} onClose={() => setEntryMenu(null)}
+          items={[
+            [
+              { label: "转为正文", action: "convert", icon: <FilePlus size={16} />, disabled: !workspace || Boolean(convertingId) },
+              { label: "选择记录", action: "select", icon: <Check size={16} /> }
+            ],
+            [{ label: "删除", action: "delete", icon: <Trash2 size={16} />, danger: true, disabled: !workspace }]
+          ]}
+          onAction={(action) => {
+            if (action === "convert") void handleConvertToNote(menuItem)
+            else if (action === "delete") void handleDeleteItem(menuItem)
+            else if (action === "select") { setSelectMode(true); setSelectedIds([menuItem.id]) }
+          }} />
       )}
 
       {/* Single convert dialog */}
       {convertDraft && (
-        <div className="convert-overlay" role="presentation" onClick={() => setConvertDraft(null)}>
-          <section className="convert-panel" aria-label="随记转正文" onClick={(e) => e.stopPropagation()}>
+        <div className="convert-overlay" role="presentation" onClick={() => { if (!convertingId) setConvertDraft(null) }}>
+          <section className="convert-panel" aria-label="随记转正文" aria-busy={Boolean(convertingId)} onClick={(e) => e.stopPropagation()}>
             <div className="convert-header">
               <div>
-                <div className="settings-section-label">Convert</div>
+                <div className="writing-dialog-eyebrow">随记</div>
                 <div className="notes-panel-title">转为正文笔记</div>
               </div>
-              <button type="button" className="secondary compact" onClick={() => setConvertDraft(null)}>
+              <button type="button" className="secondary compact" disabled={Boolean(convertingId)} onClick={() => setConvertDraft(null)}>
                 取消
               </button>
             </div>
             <div className="convert-body">
               <label className="convert-field">
                 <span className="convert-label">目标目录</span>
-                <select className="convert-input" value={convertDraft.relativeDir}
+                <select className="convert-input" disabled={Boolean(convertingId)} value={convertDraft.relativeDir}
                   onChange={(e) => setConvertDraft(c => c ? { ...c, relativeDir: e.target.value } : c)}>
                   <option value="">notes / 根目录</option>
                   {directoryOptions.map(dir => (
@@ -371,10 +457,10 @@ export function CapturePage() {
               </label>
               <label className="convert-field">
                 <span className="convert-label">文件名</span>
-                <input className="convert-input" value={convertDraft.name}
+                <input className="convert-input" disabled={Boolean(convertingId)} value={convertDraft.name}
                   onChange={(e) => setConvertDraft(c => c ? { ...c, name: e.target.value } : c)}
                   placeholder="输入正文笔记名称"
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void handleConfirmConvert() } }} />
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); void handleConfirmConvert() } }} />
               </label>
               <div className="convert-preview">
                 <div className="convert-label">内容预览</div>
@@ -382,9 +468,9 @@ export function CapturePage() {
               </div>
             </div>
             <div className="convert-footer">
-              <div className="convert-hint">Enter 创建，Esc 关闭</div>
+              <div className="convert-hint" role="status">{conversionStatus || "原随记保留 · Ctrl+Enter 创建 · Esc 关闭"}</div>
               <button type="button" className="compact" onClick={() => void handleConfirmConvert()}
-                disabled={convertingId === convertDraft.item.id}>
+                disabled={convertingId === convertDraft.item.id || !convertDraft.name.trim()}>
                 {convertingId === convertDraft.item.id ? "创建中..." : "创建正文"}
               </button>
             </div>
@@ -394,35 +480,99 @@ export function CapturePage() {
 
       {/* Batch convert dialog */}
       {batchConvertItems && (
-        <div className="convert-overlay" role="presentation" onClick={() => setBatchConvertItems(null)}>
-          <section className="convert-panel" aria-label="批量转正文" onClick={(e) => e.stopPropagation()}>
+        <div className="convert-overlay" role="presentation" onClick={() => { if (!batchConverting) setBatchConvertItems(null) }}>
+          <section className="convert-panel" aria-label="批量转正文" aria-busy={batchConverting} onClick={(e) => e.stopPropagation()}>
             <div className="convert-header">
               <div>
-                <div className="settings-section-label">AI Convert</div>
-                <div className="notes-panel-title">AI 整理为正文</div>
+                <div className="writing-dialog-eyebrow">批量整理</div>
+                <div className="notes-panel-title">批量转为正文</div>
               </div>
-              <button type="button" className="secondary compact" onClick={() => setBatchConvertItems(null)}>
+              <button type="button" className="secondary compact" disabled={batchConverting} onClick={() => setBatchConvertItems(null)}>
                 取消
               </button>
             </div>
             <div className="convert-body">
-              <div className="notes-status">将批量转换 {batchConvertItems.length} 条随记为正文笔记</div>
+              <div className="convert-hint">为 {batchConvertItems.length} 条随记各创建一篇正文，保存到 notes 根目录。</div>
               {batchConvertItems.map(item => (
                 <div key={item.id} className="convert-preview">
-                  <div className="convert-label">{formatQuickNoteTime(item.createdAt)}</div>
+                  <div className="convert-label">{formatDateGroup(item.createdAt)} · {formatQuickNoteTime(item.createdAt)}</div>
                   <div className="convert-preview-content">{item.content}</div>
                 </div>
               ))}
             </div>
             <div className="convert-footer">
-              <div className="convert-hint">AI 自动合并并创建正文笔记</div>
-              <button type="button" className="compact" onClick={() => void handleBatchConvert()}>
-                开始整理
+              <div className="convert-hint" role="status">{batchConverting ? "正在创建正文，请稍候…" : conversionStatus || "原随记保留 · Ctrl+Enter 创建 · Esc 关闭"}</div>
+              <button type="button" className="compact" disabled={batchConverting} onClick={() => void handleBatchConvert()}>
+                {batchConverting ? "创建中…" : conversionStatus ? "重试失败项" : "创建正文"}
               </button>
             </div>
           </section>
         </div>
       )}
     </section>
+  )
+}
+
+// Measure wrapping instead of truncating by character count: paragraphs, URLs and
+// pasted multiline text retain their original content at every reading width.
+function CaptureEntry({ item, selectMode, selected, onSelect, menuOpen, onOpenMenu, busy }: {
+  item: QuickNote
+  selectMode: boolean
+  selected: boolean
+  onSelect: () => void
+  menuOpen: boolean
+  onOpenMenu: (item: QuickNote, trigger: HTMLButtonElement) => void
+  busy: boolean
+}) {
+  const contentId = useId()
+  const textRef = useRef<HTMLDivElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [canExpand, setCanExpand] = useState(false)
+
+  useLayoutEffect(() => {
+    const text = textRef.current
+    if (!text) return
+    const measure = () => {
+      const lineHeight = Number.parseFloat(getComputedStyle(text).lineHeight)
+      setCanExpand(text.getBoundingClientRect().height > lineHeight * 5 + 1)
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(text)
+    return () => observer.disconnect()
+  }, [item.content])
+
+  return (
+    <article className={"quick-card" + (selected ? " selected" : "")}
+      onClick={() => { if (selectMode) onSelect() }}>
+      <div className="quick-card-leading">
+        {selectMode && (
+          <input className="quick-card-checkbox-native" type="checkbox" checked={selected}
+            aria-label={"选择随记：" + item.content.slice(0, 40)}
+            onClick={(event) => event.stopPropagation()} onChange={onSelect} />
+        )}
+        <time className="quick-card-time" dateTime={item.createdAt}>{formatQuickNoteTime(item.createdAt)}</time>
+      </div>
+      <div className="quick-card-body">
+        <div id={contentId} className={"quick-card-content" + (!expanded ? " quick-card-content--collapsed" : "")}>
+          <div ref={textRef} className="quick-card-text">{item.content}</div>
+        </div>
+        {canExpand && (
+          <button type="button" className="quick-card-expand" aria-expanded={expanded} aria-controls={contentId}
+            onClick={(event) => { event.stopPropagation(); setExpanded(current => !current) }}>
+            {expanded ? "收起全文" : "展开全文"}
+          </button>
+        )}
+      </div>
+      {!selectMode && (
+        <button type="button" className="quick-card-menu" aria-label={"随记操作：" + item.content.slice(0, 24)}
+          aria-haspopup="menu" aria-expanded={menuOpen} aria-controls={menuOpen ? "capture-entry-menu" : undefined}
+          disabled={busy} title={busy ? "准备正文…" : "随记操作"}
+          onClick={(event) => { event.stopPropagation(); onOpenMenu(item, event.currentTarget) }}>
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+            <circle cx="3" cy="8" r="1.25" /><circle cx="8" cy="8" r="1.25" /><circle cx="13" cy="8" r="1.25" />
+          </svg>
+        </button>
+      )}
+    </article>
   )
 }

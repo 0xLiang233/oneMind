@@ -1,3 +1,4 @@
+import "../styles/workbench-writing.css"
 import { tags as highlightTags } from "@lezer/highlight"
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language"
 import { languages } from "@codemirror/language-data"
@@ -33,13 +34,17 @@ import {
   deleteRow,
   deleteTable
 } from "prosemirror-tables"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react"
 import mermaid from "mermaid"
+import { openMermaidPreview } from "../platform/mermaidPreview"
 import { oneMindImageFeature, oneMindImageRenameEvent } from "../editor/oneMindImage"
 import { Pencil } from "../icons"
 import { ContextMenu, type ContextMenuItem } from "../shell/ContextMenu"
 
+export type MarkdownEditorHandle = { getMarkdown: () => string }
+
 type MarkdownEditorProps = {
+  ref?: Ref<MarkdownEditorHandle>
   value: string
   onChange: (value: string) => void
   workspacePath: string
@@ -70,9 +75,11 @@ const MERMAID_VIEWPORT_PADDING = 24
 const MERMAID_VIEWPORT_HEIGHT_RATIO = 0.64
 const MERMAID_VIEWPORT_MAX_HEIGHT = 680
 const MERMAID_CANVAS_MIN_HEIGHT = 152
-const MERMAID_FIT_MIN_SCALE = 0.2
+// Mermaid uses 16px labels by default; keep the initial preview at least 12px.
+const MERMAID_FIT_MIN_SCALE = 0.75
 
 export function MarkdownEditor({
+  ref,
   value,
   onChange,
   workspacePath,
@@ -86,12 +93,52 @@ export function MarkdownEditor({
   const rootRef = useRef<HTMLDivElement | null>(null)
   const editorRootRef = useRef<HTMLDivElement | null>(null)
   const editorRef = useRef<CrepeBuilder | null>(null)
+  const editorInitialDocumentRef = useRef({ serialized: "", body: "" })
+  const editorLifecycleRef = useRef<Promise<void>>(Promise.resolve())
   const onChangeRef = useRef(onChange)
   const onErrorRef = useRef(onError)
   const resolvedImageCacheRef = useRef(new Map<string, Promise<string>>())
   const selectionRangeRef = useRef<Range | null>(null)
   const [contextMenu, setContextMenu] = useState<EditorContextMenuState | null>(null)
+  const slashMenuRef = useRef<HTMLDivElement | null>(null)
   const [slashMenu, setSlashMenu] = useState<{ x: number; y: number; activeIndex: number } | null>(null)
+
+  useImperativeHandle(ref, () => ({
+    getMarkdown: () => {
+      const current = parsedDocumentRef.current
+      const serialized = editorRef.current?.getMarkdown()
+      const initial = editorInitialDocumentRef.current
+      const body = serialized === undefined ? current.body : serialized === initial.serialized ? initial.body : serialized
+      return mergeMarkdownDocument(current.rawProperties, body)
+    }
+  }), [])
+
+  const slashMenuOpen = slashMenu !== null
+  useEffect(() => {
+    if (!slashMenuOpen) return
+    const dismiss = () => setSlashMenu(null)
+    const outside = (event: Event) => {
+      if (event.target instanceof Node && slashMenuRef.current?.contains(event.target)) return
+      dismiss()
+    }
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); dismiss() }
+    }
+    document.addEventListener("pointerdown", outside, true)
+    document.addEventListener("focusin", outside)
+    document.addEventListener("scroll", outside, true)
+    document.addEventListener("keydown", keydown)
+    window.addEventListener("blur", dismiss)
+    window.addEventListener("resize", dismiss)
+    return () => {
+      document.removeEventListener("pointerdown", outside, true)
+      document.removeEventListener("focusin", outside)
+      document.removeEventListener("scroll", outside, true)
+      document.removeEventListener("keydown", keydown)
+      window.removeEventListener("blur", dismiss)
+      window.removeEventListener("resize", dismiss)
+    }
+  }, [slashMenuOpen])
 
   const uploadImage = useCallback(async (file: File) => {
     try {
@@ -281,28 +328,68 @@ export function MarkdownEditor({
       }
     })
 
-    editorRef.current = editor
     editor.on((listener) => {
       listener.markdownUpdated((_ctx, markdown) => {
+        if (disposed) return
         onChangeRef.current(mergeMarkdownDocument(parsedDocumentRef.current.rawProperties, markdown))
       })
     })
 
-    void editor.create().then(() => {
+    let created = false
+    const creation = editorLifecycleRef.current.then(async () => {
       if (disposed) return
-      editor.setReadonly(readonlyRef.current)
+      await editor.create()
+      created = true
+      if (!disposed) {
+        editorInitialDocumentRef.current = { serialized: editor.getMarkdown(), body: parsedDocumentRef.current.body }
+        editorRef.current = editor
+        editor.setReadonly(readonlyRef.current)
+      }
+    }).catch((error: unknown) => {
+      if (!disposed) onErrorRef.current?.(`编辑器加载失败: ${String(error)}`)
     })
+    editorLifecycleRef.current = creation
 
     return () => {
       disposed = true
-      editorRef.current = null
-      void editor.destroy()
+      if (editorRef.current === editor) editorRef.current = null
+      // Creation is asynchronous. In StrictMode a second setup can otherwise
+      // mount alongside the first editor before its early destroy takes effect.
+      editorLifecycleRef.current = creation.then(async () => {
+        if (created) await editor.destroy()
+      }).catch((error: unknown) => console.warn("Editor teardown failed:", error))
     }
   }, [renameImage, resolveImageURL, uploadImage])
 
   useEffect(() => {
     editorRef.current?.setReadonly(readonly)
   }, [readonly])
+
+  useEffect(() => {
+    const root = editorRootRef.current
+    if (!root) return
+
+    const handleLinkClick = (event: MouseEvent) => {
+      const target = event.target
+      const link = target instanceof Element ? target.closest<HTMLAnchorElement>(".ProseMirror a[href]") : null
+      if (!link || !root.contains(link) || event.button !== 0) return
+
+      // Editable content does not follow anchors; desktop navigation goes through the bridge.
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.shiftKey || window.getSelection()?.isCollapsed === false) return
+
+      const href = link.getAttribute("href") ?? ""
+      void window.oneMind.window.openExternal(href).then((opened) => {
+        if (!opened) onErrorRef.current?.("暂不支持打开此类型的链接。")
+      }).catch((error: unknown) => {
+        onErrorRef.current?.(`链接打开失败: ${String(error)}`)
+      })
+    }
+
+    root.addEventListener("click", handleLinkClick, { capture: true })
+    return () => root.removeEventListener("click", handleLinkClick, { capture: true })
+  }, [])
 
   useEffect(() => {
     const root = rootRef.current
@@ -333,8 +420,7 @@ export function MarkdownEditor({
       const viewport = findMermaidViewport(event.target)
       if (!viewport || !root.contains(viewport) || event.button !== 0) return
 
-      const scale = getMermaidPreviewNumber(viewport, "scale", 1)
-      if (scale <= 1) return
+      if (viewport.dataset.zoomed !== "true") return
 
       event.preventDefault()
       event.stopPropagation()
@@ -408,6 +494,64 @@ export function MarkdownEditor({
     }
   }, [])
 
+  useEffect(() => {
+    const root = editorRootRef.current
+    if (!root) return
+    const previews = new Map<HTMLElement, () => void>()
+    let frame = 0
+    const syncPreviews = () => {
+      frame = 0
+      previews.forEach((cleanup, viewport) => {
+        if (!root.contains(viewport)) { cleanup(); previews.delete(viewport) }
+      })
+      root.querySelectorAll<HTMLElement>(".milkdown-code-block").forEach((block) => {
+        const viewport = block.querySelector<HTMLElement>(".markdown-mermaid-viewport")
+        const group = block.querySelector(".tools-button-group")
+        const existing = group?.querySelector(".markdown-mermaid-expand")
+        if (!viewport) { existing?.remove(); return }
+        // Milkdown sanitizes/clones renderPreview's element: bind to the mounted
+        // viewport, not the detached template (whose listeners would be lost).
+        if (!previews.has(viewport)) previews.set(viewport, queueMermaidPreviewFit(viewport))
+        if (!group || existing) return
+        const button = document.createElement("button")
+        button.type = "button"
+        button.className = "markdown-mermaid-expand"
+        button.title = "在新窗口中全屏查看 Mermaid 图表"
+        button.setAttribute("aria-label", "独立预览 Mermaid 图表")
+        button.innerHTML = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg><span>独立预览</span>'
+        group.insertBefore(button, group.querySelector(".preview-toggle-button"))
+      })
+    }
+    const observer = new MutationObserver(() => {
+      if (!frame) frame = requestAnimationFrame(syncPreviews)
+    })
+    observer.observe(root, { childList: true, subtree: true })
+    const openPreview = (event: MouseEvent) => {
+      const button = event.target instanceof Element ? event.target.closest(".markdown-mermaid-expand") : null
+      if (!button || !root.contains(button)) return
+      event.preventDefault()
+      event.stopPropagation()
+      const block = button.closest(".milkdown-code-block")
+      const viewport = block?.querySelector<HTMLElement>(".markdown-mermaid-viewport")
+      const code = block?.querySelector<HTMLElement>(".cm-content")
+      const source = (code ? EditorView.findFromDOM(code)?.state.doc.toString() : null) ?? viewport?.dataset.mermaidSource
+      if (source) void openMermaidPreview(source).catch((error: unknown) => onErrorRef.current?.(`图表预览打开失败: ${String(error)}`))
+    }
+    const preserveSelection = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest(".markdown-mermaid-expand")) event.preventDefault()
+    }
+    root.addEventListener("click", openPreview, true)
+    root.addEventListener("pointerdown", preserveSelection, true)
+    syncPreviews()
+    return () => {
+      observer.disconnect()
+      cancelAnimationFrame(frame)
+      previews.forEach((cleanup) => cleanup())
+      root.removeEventListener("click", openPreview, true)
+      root.removeEventListener("pointerdown", preserveSelection, true)
+    }
+  }, [])
+
   function saveCurrentSelection() {
     const selection = window.getSelection()
     if (!selection || selection.rangeCount === 0) return
@@ -430,6 +574,7 @@ export function MarkdownEditor({
   function handleContextMenu(e: React.MouseEvent) {
     if (!rootRef.current?.contains(e.target as Node)) return
     e.preventDefault()
+    setSlashMenu(null)
     const target = e.target instanceof Element ? e.target : null
     const inTable = Boolean(target?.closest("td, th"))
     const candidateImageNode = target?.closest<HTMLElement>(".onemind-image-node") ?? null
@@ -485,9 +630,10 @@ export function MarkdownEditor({
     const position = getSelectionMenuPosition()
     if (!position) return
     saveCurrentSelection()
+    setContextMenu(null)
     setSlashMenu({
-      x: Math.min(position.x, window.innerWidth - 296),
-      y: Math.min(position.y, window.innerHeight - 348),
+      x: Math.max(8, Math.min(position.x, window.innerWidth - 296)),
+      y: Math.max(8, Math.min(position.y, window.innerHeight - 348)),
       activeIndex: 0
     })
   }
@@ -521,10 +667,8 @@ export function MarkdownEditor({
       event.preventDefault()
       void handleSlashAction(slashCommands[slashMenu.activeIndex].action)
     }
-    if (event.key === "Escape") {
-      event.preventDefault()
-      setSlashMenu(null)
-    }
+    if (["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)) event.stopPropagation()
+    if (!["ArrowDown", "ArrowUp", "Enter", "Shift", "Control", "Alt", "Meta"].includes(event.key)) setSlashMenu(null)
   }
 
   async function handleSlashAction(action: string) {
@@ -716,11 +860,12 @@ export function MarkdownEditor({
 
   return (
     <div
-      className="onemind-markdown-editor"
+      className="onemind-markdown-editor writing-editor"
+      data-readonly={readonly || undefined}
       ref={rootRef}
       onContextMenu={handleContextMenu}
       onMouseUp={saveCurrentSelection}
-      onKeyDown={handleSlashMenuKeyDown}
+      onKeyDownCapture={handleSlashMenuKeyDown}
       onKeyUp={(event) => {
         saveCurrentSelection()
         if (event.key === "/") openSlashMenu()
@@ -752,6 +897,7 @@ export function MarkdownEditor({
       )}
       {slashMenu && (
         <div
+          ref={slashMenuRef}
           className="markdown-slash-menu"
           style={{ left: slashMenu.x, top: slashMenu.y }}
           role="listbox"
@@ -809,13 +955,16 @@ function createMermaidPreviewElement(svg: string, source: string) {
   viewport.className = "markdown-mermaid-viewport"
   viewport.dataset.scale = "1"
   viewport.dataset.mermaidSource = source
+  viewport.tabIndex = 0
+  viewport.setAttribute("role", "region")
+  viewport.setAttribute("aria-label", "Mermaid 图表，可滚动查看，Ctrl 或 Command 加滚轮缩放，双击复位")
+  viewport.title = "滚动查看 · Ctrl / ⌘ + 滚轮缩放 · 双击复位"
 
   const canvas = document.createElement("div")
   canvas.className = "markdown-mermaid-canvas"
   canvas.innerHTML = svg
   prepareMermaidSvg(canvas.querySelector("svg"))
   viewport.appendChild(canvas)
-  queueMermaidPreviewFit(viewport)
   return viewport
 }
 
@@ -881,6 +1030,7 @@ function zoomMermaidPreview(viewport: HTMLElement, deltaY: number, clientX: numb
 function queueMermaidPreviewFit(viewport: HTMLElement) {
   let frame = 0
   let stableFrames = 0
+  let settleTimer = 0
   let lastWidth = 0
   let lastHeight = 0
 
@@ -892,6 +1042,7 @@ function queueMermaidPreviewFit(viewport: HTMLElement) {
 
     const rect = viewport.getBoundingClientRect()
     const hasSize = rect.width > 0 && rect.height > 0
+    if (!hasSize) { frame = 0; return }
     const isStable = hasSize && Math.abs(rect.width - lastWidth) < 0.5 && Math.abs(rect.height - lastHeight) < 0.5
     lastWidth = rect.width
     lastHeight = rect.height
@@ -923,6 +1074,7 @@ function queueMermaidPreviewFit(viewport: HTMLElement) {
   }
 
   const teardown = () => {
+    window.clearTimeout(settleTimer)
     window.removeEventListener("resize", handleWindowResize)
     resizeObserver.disconnect()
     if (frame) {
@@ -947,12 +1099,13 @@ function queueMermaidPreviewFit(viewport: HTMLElement) {
       fitMermaidPreview(viewport)
     }
   })
-  window.setTimeout(() => {
+  settleTimer = window.setTimeout(() => {
     if (document.body.contains(viewport) && getMermaidPreviewNumber(viewport, "scale", 1) <= 1.02) {
       fitMermaidPreview(viewport)
     }
     if (!document.body.contains(viewport)) teardown()
   }, 180)
+  return teardown
 }
 
 function getMermaidSvg(viewport: HTMLElement) {
@@ -988,6 +1141,8 @@ function resizeMermaidPreview(
 
   const { innerWidth, innerHeight } = getMermaidAvailableSize(viewport)
   const fitScale = clamp(
+    // Fit the overview when legible; oversized diagrams scroll rather than
+    // shrinking their labels below the readable minimum.
     Math.min(innerWidth / viewBox.width, innerHeight / viewBox.height),
     MERMAID_FIT_MIN_SCALE,
     1
@@ -1010,7 +1165,7 @@ function resizeMermaidPreview(
     canvas.style.alignItems = nextHeight < MERMAID_CANVAS_MIN_HEIGHT ? "center" : "flex-start"
   }
   viewport.dataset.scale = String(scale)
-  viewport.dataset.zoomed = String(scale > 1.02)
+  viewport.dataset.zoomed = String(scale > 1.02 || nextWidth > innerWidth + 1 || nextHeight > innerHeight + 1)
 
   if (focus) {
     const afterRect = svg.getBoundingClientRect()
@@ -1396,6 +1551,7 @@ function TagInput({ onCommit }: { onCommit: (value: string) => void }) {
   return (
     <input
       className="markdown-property-tag-input"
+      aria-label="添加标签"
       value={value}
       placeholder="+ 标签"
       onChange={(event) => setValue(event.target.value)}

@@ -1,0 +1,17 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "OneMind",
+        "width": 1040,
+        "height": 760,
+        "decorations": false,
+        "resizable": true,
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["mica"]
+        }
+      }
+    ]
+  }
+}

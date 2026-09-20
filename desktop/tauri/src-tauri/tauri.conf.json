@@ -4,9 +4,9 @@
   "version": "../../../package.json",
   "identifier": "io.github.0xliang233.onemind",
   "build": {
-    "beforeDevCommand": "pnpm --dir ../../renderer dev",
+    "beforeDevCommand": "pnpm --dir ../../renderer dev --port 1420",
     "beforeBuildCommand": "pnpm --dir ../../renderer build",
-    "devUrl": "http://127.0.0.1:5173",
+    "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../../../renderer/dist"
   },
   "app": {

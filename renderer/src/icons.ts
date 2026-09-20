@@ -2,6 +2,7 @@ export type { LucideIcon, LucideProps } from "lucide-react"
 
 export {
   Activity,
+  ArrowUp,
   AlertTriangle,
   Check,
   ChevronDown,
@@ -9,6 +10,7 @@ export {
   ChevronRight,
   Circle,
   Clock,
+  CodeXml,
   File,
   FilePlus,
   FileText,

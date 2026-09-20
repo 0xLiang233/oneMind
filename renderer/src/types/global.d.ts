@@ -210,11 +210,19 @@ type SavedNoteAsset = {
 
 interface Window {
   oneMind: {
+    /** Optional capability; legacy shells use the browser preview adapter. */
+    mermaidPreview?: {
+      open: (source: string, theme: "light" | "dark") => Promise<void>
+      read: () => Promise<{ source: string; theme: "light" | "dark" }>
+      setFullscreen: (fullscreen: boolean) => Promise<void>
+      close: () => Promise<void>
+    }
     runtime?: {
       platform: 'electron' | 'tauri' | 'unsupported'
       bridgeReady: boolean
     }
     window: {
+      openExternal: (url: string) => Promise<boolean>
       minimize: () => Promise<void>
       toggleMaximize: () => Promise<void>
       close: () => Promise<void>

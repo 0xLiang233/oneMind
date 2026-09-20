@@ -6,9 +6,11 @@ import { flushBeforeSync } from "../sync/saveBarrier"
 import { useWorkspaceSync } from "../sync/useWorkspaceSync"
 import type { LucideIcon } from "../icons"
 import {
+  ChevronDown,
   ChevronRight,
   FilePlus,
   FileText,
+  Folder,
   FolderOpen,
   FolderPlus,
   Grid3X3,
@@ -191,16 +193,8 @@ function FolderArrow() {
 function FolderIcon() {
   return (
     <span className="tree-folder-icon">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <path
-          className="tree-folder-icon-tab"
-          d="M1.8 4.4C1.8 3.6 2.45 3 3.22 3h3.1c.44 0 .86.2 1.13.55l.63.82h4.62c.82 0 1.48.66 1.48 1.48v.65H1.8V4.4Z"
-        />
-        <path
-          className="tree-folder-icon-body"
-          d="M1.55 6.15c.07-.7.67-1.23 1.37-1.23h10.16c.79 0 1.41.67 1.35 1.46l-.42 5.14c-.06.72-.66 1.28-1.38 1.28H3.13c-.72 0-1.32-.56-1.38-1.28l-.2-5.37Z"
-        />
-      </svg>
+      <Folder className="tree-folder-closed-glyph" size={16} strokeWidth={1.5} aria-hidden="true" />
+      <FolderOpen className="tree-folder-open-glyph" size={16} strokeWidth={1.5} aria-hidden="true" />
     </span>
   )
 }
@@ -208,7 +202,7 @@ function FolderIcon() {
 function FileIcon() {
   return (
     <span className="tree-file-icon">
-      <FileText size={14} strokeWidth={1.7} aria-hidden="true" />
+      <FileText size={16} strokeWidth={1.5} aria-hidden="true" />
     </span>
   )
 }
@@ -339,7 +333,13 @@ export function AppShell() {
   const [busy, setBusy] = useState(false)
   const [bridgeReady, setBridgeReady] = useState(false)
   const [bridgeError, setBridgeError] = useState("")
-  const [tabs, setTabs] = useState<Tab[]>([])
+  const [tabs, setTabs] = useState<Tab[]>(() => upsertTab([], createTabFromRoute(normalizeRoutePath(location.pathname) + location.search)))
+  const [recordedRoute, setRecordedRoute] = useState(normalizeRoutePath(location.pathname) + location.search)
+  const navigationRequestRef = useRef(0)
+  const tabsToolbarRef = useRef<HTMLDivElement>(null)
+  const tabsListRef = useRef<HTMLDivElement>(null)
+  const [tabsOverflow, setTabsOverflow] = useState(false)
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number; trigger: HTMLButtonElement } | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(getInitialSidebarCollapsed)
   const [sidebarWidth, setSidebarWidth] = useState(getInitialSidebarWidth)
   const sidebarWidthRef = useRef(204)
@@ -427,6 +427,13 @@ export function AppShell() {
   }, [sidebarWidth])
 
   const currentRoutePath = normalizeRoutePath(location.pathname) + location.search
+  // Record every route, including tree clicks and search/deep-link navigation.
+  // A render-time guarded adjustment avoids a transient one-tab state and does
+  // not reinsert the previous route when closing the active tab.
+  if (recordedRoute !== currentRoutePath) {
+    setRecordedRoute(currentRoutePath)
+    setTabs(current => upsertTab(current, createTabFromRoute(currentRoutePath)))
+  }
   const activeTabPath = currentRoutePath
   const visibleTabs = useMemo(() => upsertTab(tabs, createTabFromRoute(currentRoutePath)), [currentRoutePath, tabs])
 
@@ -524,6 +531,42 @@ export function AppShell() {
     document.addEventListener("pointerup", handlePointerUp)
   }, [sidebarCollapsed, sidebarWidth])
 
+  useEffect(() => {
+    const active = document.querySelector<HTMLElement>('.workbench-tabs [aria-selected="true"]')
+    active?.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }, [activeTabPath])
+
+  useEffect(() => {
+    const toolbar = tabsToolbarRef.current
+    const list = tabsListRef.current
+    if (!toolbar || !list) return
+    let frame = 0
+    const measure = () => {
+      // Compare intrinsic tab widths against the full toolbar, excluding the
+      // conditional menu button so its appearance cannot cause resize flicker.
+      const style = getComputedStyle(toolbar)
+      const gap = parseFloat(getComputedStyle(list).columnGap) || 0
+      const children = Array.from(list.children) as HTMLElement[]
+      const required = children.reduce((width, child) => width + child.getBoundingClientRect().width, 0)
+        + Math.max(0, children.length - 1) * gap
+      const available = toolbar.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+      const overflowing = required > available + 1
+      setTabsOverflow(overflowing)
+      if (!overflowing) setTabMenu(null)
+      list.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" })
+    }
+    const schedule = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(measure)
+    }
+    const observer = new ResizeObserver(schedule)
+    observer.observe(toolbar)
+    observer.observe(list)
+    Array.from(list.children).forEach(child => observer.observe(child))
+    schedule()
+    return () => { cancelAnimationFrame(frame); observer.disconnect() }
+  }, [visibleTabs])
+
   const handleTabsWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
     event.currentTarget.scrollLeft += event.deltaY
@@ -548,8 +591,18 @@ export function AppShell() {
         writeShellInteractionLog("miniapp_hide_before_route_open_failed", `to=${nextRoutePath} error=${String(error)}`)
       })
     }
-    setTabs(prev => upsertTab(upsertTab(prev, createTabFromRoute(currentRoutePath)), createTabFromRoute(nextRoutePath)))
-    navigate(nextRoutePath)
+    const request = ++navigationRequestRef.current
+    const commitNavigation = () => {
+      if (request !== navigationRequestRef.current) return
+      setTabs(prev => upsertTab(prev, createTabFromRoute(nextRoutePath)))
+      navigate(nextRoutePath)
+    }
+    if (nextRoutePath !== currentRoutePath && currentRoutePath.startsWith("/notes")) {
+      // Switching tabs must not discard edits still waiting for autosave.
+      void flushBeforeSync().then(commitNavigation).catch((error: unknown) => {
+        if (request === navigationRequestRef.current) window.alert(`笔记保存失败，已保留当前页签：${String(error)}`)
+      })
+    } else commitNavigation()
   }, [currentRoutePath, navigate])
 
   useEffect(() => {
@@ -559,8 +612,7 @@ export function AppShell() {
   }, [openRoute])
 
   function openNoteFile(filePath: string) {
-    setSelectedSidebarPath(filePath)
-    navigate("/notes?selected=" + encodeURIComponent(filePath))
+    openRoute("/notes?selected=" + encodeURIComponent(filePath))
   }
 
   async function openTreeFile(filePath: string) {
@@ -574,7 +626,7 @@ export function AppShell() {
         workspace: workspace.workspacePath,
         title: getFileName(filePath)
       })
-      navigate("/file-viewer?" + params.toString())
+      openRoute("/file-viewer?" + params.toString())
       return
     }
     if (!workspace) return
@@ -660,16 +712,18 @@ export function AppShell() {
   }
 
   function closeTab(path: string) {
-    setTabs(prev => {
-      const next = prev.filter(t => t.path !== path)
-      const nextVisible = visibleTabs.filter(t => t.path !== path)
-      if (activeTabPath === path && nextVisible.length > 0) {
-        navigate(nextVisible[nextVisible.length - 1].path)
-      } else if (nextVisible.length === 0) {
-        navigate("/home")
-      }
-      return next
-    })
+    const request = ++navigationRequestRef.current
+    const commitClose = () => {
+      if (request !== navigationRequestRef.current) return
+      const nextVisible = visibleTabs.filter(tab => tab.path !== path)
+      setTabs(nextVisible)
+      if (activeTabPath === path) navigate(nextVisible.at(-1)?.path ?? "/home")
+    }
+    if (activeTabPath === path && path.startsWith("/notes")) {
+      void flushBeforeSync().then(commitClose).catch((error: unknown) => {
+        if (request === navigationRequestRef.current) window.alert(`笔记保存失败，未关闭页签：${String(error)}`)
+      })
+    } else commitClose()
   }
 
   async function handleCreateDefault() {
@@ -698,8 +752,7 @@ export function AppShell() {
           targetLabel: nameInput
         })
         setExpandedFolders(prev => expandPathAncestors(prev, filePath, ws.notesPath))
-        setSelectedSidebarPath(filePath)
-        navigate("/notes?selected=" + encodeURIComponent(filePath))
+        openNoteFile(filePath)
       } else {
         const folderPath = await window.oneMind.notes.createFolder(ws.workspacePath, dirPath, nameInput)
         trackActivity(ws.workspacePath, {
@@ -1009,7 +1062,7 @@ export function AppShell() {
         <div className="chrome-brand">
           <div className="chrome-brand-identity" aria-hidden="true" data-tauri-drag-region>
             <span className="brand-mark small">O</span>
-            <span className="titlebar-brand-name">ONEMIND</span>
+            <span className="titlebar-brand-name">OneMind</span>
           </div>
           <button
             type="button"
@@ -1027,43 +1080,62 @@ export function AppShell() {
             </span>
           </button>
         </div>
-        <div className="chrome-tabs" onWheel={handleTabsWheel}>
-          <button
-            type="button"
-            className={activeTabPath === "/home" ? "tab-item active" : "tab-item"}
-            onClick={() => openRoute("/home")}
-          >
-            首页
-          </button>
-          {visibleTabs.map(tab => (
-            <button
-              key={tab.id}
-              type="button"
-              className={tab.path === activeTabPath ? "tab-item active" : "tab-item"}
-              onClick={() => openRoute(tab.path)}
-            >
-              <span className="tab-item-label">
-                {tab.label}
-              </span>
-              <span
-                role="button"
-                tabIndex={0}
-                className="tab-item-close"
-                onClick={(e) => { e.stopPropagation(); closeTab(tab.path); }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    closeTab(tab.path)
-                  }
-                }}
-              >
-                <X size={12} strokeWidth={2} aria-hidden="true" />
-              </span>
-            </button>
-          ))}
-        </div>
-        <div className="chrome-drag-region" data-tauri-drag-region />
+          <div ref={tabsToolbarRef} className="workbench-toolbar" data-tauri-drag-region>
+            <div ref={tabsListRef} className="chrome-tabs workbench-tabs" data-tauri-drag-region role="tablist" aria-label="已打开的任务" onWheel={handleTabsWheel}
+              onKeyDown={(event) => {
+                if (event.target instanceof HTMLElement && event.target.getAttribute("role") !== "tab") return
+                const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+                const index = items.indexOf(event.target as HTMLButtonElement)
+                let next: number
+                if (event.key === "ArrowRight") next = (index + 1) % items.length
+                else if (event.key === "ArrowLeft") next = (index - 1 + items.length) % items.length
+                else if (event.key === "Home") next = 0
+                else if (event.key === "End") next = items.length - 1
+                else return
+                event.preventDefault()
+                items[next]?.focus()
+                items[next]?.click()
+              }}>
+              <div className={"workbench-tab pinned" + (activeTabPath === "/home" ? " active" : "")}>
+                <button type="button" className="tab-item" role="tab" aria-selected={activeTabPath === "/home"}
+                  tabIndex={activeTabPath === "/home" ? 0 : -1} aria-label="工作台" title="工作台"
+                  onClick={() => openRoute("/home")}><Grid3X3 size={15} aria-hidden="true" /></button>
+              </div>
+              {visibleTabs.map(tab => (
+                <div key={tab.id} className={"workbench-tab" + (tab.path === activeTabPath ? " active" : "")}
+                  onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); closeTab(tab.path) } }}>
+                  <button type="button" role="tab" className="tab-item" title={tab.label}
+                    aria-selected={tab.path === activeTabPath} tabIndex={tab.path === activeTabPath ? 0 : -1}
+                    onClick={() => openRoute(tab.path)}>
+                    <span className="tab-item-label">{tab.label}</span>
+                  </button>
+                  <button type="button" className="tab-item-close" aria-label={`关闭 ${tab.label}`}
+                    title={`关闭 ${tab.label}`} onClick={() => closeTab(tab.path)}>
+                    <X size={12} aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            {tabsOverflow && <button type="button" className="workbench-tab-switcher"
+              aria-label="全部标签" title="全部标签" aria-haspopup="menu" aria-expanded={Boolean(tabMenu)}
+              aria-controls={tabMenu ? "workbench-tab-menu" : undefined}
+              onClick={(event) => {
+                const trigger = event.currentTarget
+                const rect = trigger.getBoundingClientRect()
+                setContextMenu(null)
+                setTabMenu(current => current ? null : { x: rect.right - 300, y: rect.bottom + 6, trigger })
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return
+                event.preventDefault()
+                const rect = event.currentTarget.getBoundingClientRect()
+                setContextMenu(null)
+                setTabMenu({ x: rect.right - 300, y: rect.bottom + 6, trigger: event.currentTarget })
+              }}>
+              <ChevronDown size={15} aria-hidden="true" />
+            </button>}
+          </div>
+        <div className="chrome-drag-region" data-tauri-drag-region title="拖动窗口" />
         <div
           className="titlebar-controls"
           onPointerDown={(event) => {
@@ -1132,44 +1204,61 @@ export function AppShell() {
           />
           {/* Expanded content */}
           <div className="sidebar-expanded-content">
-            {/* Quick Note Section (fixed) */}
+            {/* Primary navigation shares the same quiet rows as the file tree. */}
             <div className="sidebar-section sidebar-section--quick-note">
+              <button
+                type="button"
+                className={location.pathname === "/home" ? "nav-item active" : "nav-item"}
+                onClick={() => openRoute("/home")}
+              >
+                <Grid3X3 size={16} strokeWidth={1.5} aria-hidden="true" />
+                <span>工作台</span>
+              </button>
               <button
                 type="button"
                 className={location.pathname === "/capture" ? "nav-item nav-item--quick-note active" : "nav-item nav-item--quick-note"}
                 onClick={() => openRoute("/capture")}
               >
-                <Zap size={14} strokeWidth={1.8} style={{ flexShrink: 0 }} aria-hidden="true" />
+                <Pencil size={16} strokeWidth={1.5} aria-hidden="true" />
                 <span>随记</span>
               </button>
+              <div className={"sidebar-search sidebar-notes-search sidebar-search-row" + (notesSearchExpanded || notesSearchQuery ? " expanded" : "")}>
+                <button
+                  type="button"
+                  className="nav-item sidebar-search-trigger"
+                  aria-label="搜索笔记"
+                  tabIndex={notesSearchExpanded || notesSearchQuery ? -1 : 0}
+                  title="搜索笔记"
+                  onClick={expandNotesSearch}
+                >
+                  <Search size={16} strokeWidth={1.5} aria-hidden="true" />
+                  <span>搜索笔记</span>
+                </button>
+                <input
+                  ref={notesSearchRef}
+                  className="sidebar-search-input"
+                  aria-label="筛选笔记"
+                  tabIndex={notesSearchExpanded || notesSearchQuery ? 0 : -1}
+                  value={notesSearchQuery}
+                  onChange={(event) => setNotesSearchQuery(event.target.value)}
+                  onFocus={() => setNotesSearchExpanded(true)}
+                  onBlur={collapseNotesSearchIfEmpty}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault()
+                      setNotesSearchQuery("")
+                      setNotesSearchExpanded(false)
+                      event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(".sidebar-search-trigger")?.focus()
+                    }
+                  }}
+                  placeholder="搜索笔记..."
+                />
+              </div>
             </div>
 
-            <div className="sidebar-divider" />
-
-            {/* Notes Section (flex: 1) */}
             <div className="sidebar-section sidebar-section--notes">
               <div className="sidebar-section-header">
                 <div className="sidebar-section-title">笔记</div>
-                <div className={"sidebar-search sidebar-notes-search" + (notesSearchExpanded || notesSearchQuery ? " expanded" : "")}>
-                  <button
-                    type="button"
-                    className="sidebar-search-trigger"
-                    aria-label="搜索笔记"
-                    title="搜索笔记"
-                    onClick={expandNotesSearch}
-                  >
-                    <Search size={13} strokeWidth={1.8} aria-hidden="true" />
-                  </button>
-                  <input
-                    ref={notesSearchRef}
-                    className="sidebar-search-input"
-                    value={notesSearchQuery}
-                    onChange={(event) => setNotesSearchQuery(event.target.value)}
-                    onFocus={() => setNotesSearchExpanded(true)}
-                    onBlur={collapseNotesSearchIfEmpty}
-                    placeholder="搜索笔记..."
-                  />
-                </div>
               </div>
               {/* File tree */}
               <div
@@ -1193,8 +1282,6 @@ export function AppShell() {
               </div>
             </div>
 
-            <div className="sidebar-divider" />
-
             {/* Bottom: miniapp + settings + workspace */}
             <div className="sidebar-bottom">
               <button
@@ -1214,7 +1301,7 @@ export function AppShell() {
                 <span>设置</span>
               </button>
 
-              <div className="workspace-default">{defaultPath || "Loading..."}</div>
+              <div className="workspace-default" title={defaultPath}>{defaultPath.split(/[/\\]/).filter(Boolean).pop() || "Loading..."}</div>
             </div>
           </div>
 
@@ -1258,6 +1345,22 @@ export function AppShell() {
           </section>
         </main>
       </div>
+
+      {tabMenu && (
+        <ContextMenu
+          id="workbench-tab-menu" className="workbench-tab-menu" ariaLabel="已打开的标签"
+          trigger={tabMenu.trigger}
+          x={tabMenu.x} y={tabMenu.y}
+          items={[[{ label: "工作台", action: "/home", icon: <Grid3X3 size={16} />, checked: activeTabPath === "/home" }],
+            visibleTabs.map(tab => {
+              const route = tab.path.split("?")[0]
+              const Icon = route === "/settings" ? Settings : route === "/sources" ? Grid3X3 : route === "/capture" ? Pencil : route === "/search" ? Search : FileText
+              return { label: tab.label, action: tab.path, icon: <Icon size={16} />, checked: tab.path === activeTabPath }
+            })]}
+          onClose={() => setTabMenu(null)}
+          onAction={(path) => { setTabMenu(null); openRoute(path) }}
+        />
+      )}
 
       {contextMenu && (
         <ContextMenu
@@ -1448,4 +1551,3 @@ export function AppShell() {
     </div>
   )
 }
-

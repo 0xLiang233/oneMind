@@ -1,3 +1,4 @@
+import "../styles/workbench-writing.css"
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { trackActivity } from "../activity"
 import { Check, PenLine, Search } from "../icons"
@@ -550,12 +551,12 @@ export function FloatNotePage() {
   const handleInputMouseDownEvent = () => writeDebugLog("float_note_input_mousedown_event", getFocusSnapshot("input_mousedown"))
 
   return (
-    <main className="float-note-page" onMouseDown={(event) => {
+    <main className="float-note-page writing-float" onMouseDown={(event) => {
       if (event.target === event.currentTarget) {
         void window.oneMind.floatNote.hide()
       }
     }}>
-      <section ref={paletteRef} className={"float-note-palette mode-" + mode} onMouseDown={(event) => event.stopPropagation()}>
+      <section ref={paletteRef} aria-label={mode === "quick" ? "快速随记" : "搜索工具"} aria-busy={saveState === "saving"} className={"float-note-palette mode-" + mode} onMouseDown={(event) => event.stopPropagation()}>
         <header className="float-note-header">
           <button type="button" className="float-note-mode-wheel" onClick={switchMode} aria-label="切换模式">
             <span className="float-note-mode-wheel-track">
@@ -570,6 +571,7 @@ export function FloatNotePage() {
           <textarea
             ref={inputRef}
             className="float-note-input float-note-text-input"
+            aria-label={mode === "quick" ? "随记内容" : "搜索工具"}
             value={value}
             onChange={handleValueChange}
             onKeyDown={handleKeyDown}
@@ -582,7 +584,7 @@ export function FloatNotePage() {
             disabled={saveState === "saving" || saveState === "saved"}
           />
           {mode === "quick" && saveState !== "idle" ? (
-            <span className={"float-note-save-indicator " + saveState} aria-label={saveState === "saving" ? "保存中" : "已保存"}>
+            <span role="status" className={"float-note-save-indicator " + saveState} aria-label={saveState === "saving" ? "保存中" : "已保存"}>
               {saveState === "saving" ? null : (
                 <Check size={14} strokeWidth={2} aria-hidden="true" />
               )}
@@ -649,7 +651,7 @@ export function FloatNotePage() {
         ) : null}
 
         <footer className="float-note-hint-bar">{shortcutHint}</footer>
-        {status ? <div className="float-note-toast">{status}</div> : null}
+        {status ? <div className="float-note-toast" role="status">{status}</div> : null}
       </section>
     </main>
   )

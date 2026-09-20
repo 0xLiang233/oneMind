@@ -6,12 +6,22 @@ import { check as checkForUpdate, type Update } from "@tauri-apps/plugin-updater
 let pendingUpdate: Update | null = null
 
 export function createTauriBridge(): Window["oneMind"] {
+  if (navigator.userAgent.includes("Windows")) {
+    document.documentElement.dataset.nativeBackdrop = "mica"
+  }
   return {
+    mermaidPreview: {
+      open: (source, theme) => invoke<void>("mermaid_preview_open", { source, theme }),
+      read: () => invoke("mermaid_preview_read"),
+      setFullscreen: (fullscreen) => invoke<void>("mermaid_preview_fullscreen", { fullscreen }),
+      close: () => invoke<void>("mermaid_preview_close")
+    },
     runtime: {
       platform: "tauri",
       bridgeReady: true
     },
     window: {
+      openExternal: (url) => invoke<boolean>("window_open_external", { url }),
       minimize: () => invoke<void>("window_minimize"),
       toggleMaximize: () => invoke<void>("window_toggle_maximize"),
       close: () => invoke<void>("window_close"),

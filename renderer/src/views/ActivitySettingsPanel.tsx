@@ -1,3 +1,4 @@
+import "../styles/workbench-settings.css"
 import { type CSSProperties, useEffect, useMemo, useState } from "react"
 import { flushActivity } from "../activity"
 
@@ -176,24 +177,18 @@ export function ActivitySettingsPanel({ workspacePath }: ActivitySettingsPanelPr
   const streak = report?.totals.currentStreakDays ?? 0
 
   return (
-    <div className="activity-settings-panel">
-      <div className="activity-hero">
-        <div>
-          <p>最近 3 个月的使用节奏、功能分布和操作记录。</p>
-        </div>
-      </div>
-
+    <div className="activity-settings-panel workbench-activity" aria-busy={loading}>
       <section className="activity-metrics" aria-label="活跃概览">
         <div className="activity-metric">
           <span>操作</span>
           <strong>{totalEvents}</strong>
         </div>
         <div className="activity-metric">
-          <span>天数</span>
+          <span>活跃天数</span>
           <strong>{activeDays}</strong>
         </div>
         <div className="activity-metric">
-          <span>连续</span>
+          <span>连续天数</span>
           <strong>{streak}</strong>
         </div>
       </section>
@@ -202,15 +197,16 @@ export function ActivitySettingsPanel({ workspacePath }: ActivitySettingsPanelPr
         <div className="activity-card activity-rhythm-card">
           <div className="activity-card-header">
             <div>
-              <h3>每日活跃</h3>
+              <h2>每日活跃</h2>
               <p>{loading ? "正在更新活跃记录..." : `${startDate} - ${today}`}</p>
             </div>
-            <div className="activity-filter-row">
+            <div className="activity-filter-row" role="group" aria-label="筛选活动模块">
               {modules.map((module) => (
                 <button
                   key={module}
                   type="button"
                   className={moduleFilter === module ? "activity-filter active" : "activity-filter"}
+                  aria-pressed={moduleFilter === module}
                   onClick={() => setModuleFilter(module)}
                 >
                   {module === "all" ? "全部" : getModuleLabel(module)}
@@ -220,6 +216,7 @@ export function ActivitySettingsPanel({ workspacePath }: ActivitySettingsPanelPr
           </div>
           <div
             className="activity-calendar"
+            role="group"
             aria-label="每日活跃热力图"
             style={{ "--activity-weeks": calendarWeekCount } as CSSProperties}
           >
@@ -237,6 +234,8 @@ export function ActivitySettingsPanel({ workspacePath }: ActivitySettingsPanelPr
                   ].filter(Boolean).join(" ")}
                   data-level={getIntensity(score)}
                   title={isFuture ? `${date} · 预设` : `${date} · ${score} 次`}
+                  aria-label={`${date} · ${isFuture ? "未来日期" : `${score} 次活动`}`}
+                  aria-pressed={selectedDate === date}
                   disabled={isFuture}
                   onClick={() => !isFuture && setSelectedDate(date)}
                 />
@@ -256,7 +255,7 @@ export function ActivitySettingsPanel({ workspacePath }: ActivitySettingsPanelPr
         <div className="activity-card activity-modules-card">
           <div className="activity-card-header compact">
             <div>
-              <h3>功能分布</h3>
+              <h2>功能分布</h2>
               <p>按记录次数排序</p>
             </div>
           </div>
@@ -266,6 +265,7 @@ export function ActivitySettingsPanel({ workspacePath }: ActivitySettingsPanelPr
                 key={item.module}
                 type="button"
                 className={moduleFilter === item.module ? "activity-module-row active" : "activity-module-row"}
+                aria-pressed={moduleFilter === item.module}
                 onClick={() => setModuleFilter(item.module)}
               >
                 <span className={"activity-module " + (moduleMeta[item.module]?.tone ?? "slate")}>
@@ -285,7 +285,7 @@ export function ActivitySettingsPanel({ workspacePath }: ActivitySettingsPanelPr
       <section className="activity-card activity-timeline-card">
         <div className="activity-card-header compact">
           <div>
-            <h3>{selectedDate}</h3>
+            <h2>{selectedDate}</h2>
             <p>
               {selectedSummary
                 ? Object.entries(selectedSummary.moduleCounts).map(([module, count]) => `${getModuleLabel(module)} ${count}`).join(" · ")
@@ -297,7 +297,7 @@ export function ActivitySettingsPanel({ workspacePath }: ActivitySettingsPanelPr
         <div className="activity-timeline">
           {selectedEvents.map((event) => (
             <article className="activity-timeline-item" key={event.id}>
-              <time>{getTimeLabel(getEventTime(event))}</time>
+              <time dateTime={getEventTime(event)}>{getTimeLabel(getEventTime(event))}</time>
               <span className={"activity-module " + (moduleMeta[event.module]?.tone ?? "slate")}>
                 {getModuleLabel(event.module)}
               </span>

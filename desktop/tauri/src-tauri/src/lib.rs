@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use windows::core::Interface;
 mod float_note_focus;
+mod mermaid_preview;
 mod sync;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
@@ -2193,6 +2194,12 @@ fn should_keep_miniapp_navigation_inside(base_url: &Url, target_url: &Url) -> bo
         || is_miniapp_auth_navigation(base_url, target_url)
 }
 
+#[tauri::command]
+fn window_open_external(url: String) -> Result<bool, String> {
+    let target = Url::parse(&url).map_err(|e| format!("invalid external url: {e}"))?;
+    open_external_web_url(&target)
+}
+
 fn open_external_web_url(url: &Url) -> Result<bool, String> {
     if !is_external_web_url(url) {
         return Ok(false);
@@ -4039,6 +4046,7 @@ pub fn run() {
         .manage(ShortcutStateStore::default())
         .manage(SystemAppStore::default())
         .manage(sync::SyncState::default())
+        .manage(mermaid_preview::PreviewStore::default())
         .setup(|app| {
             append_boot_log_line(app.handle(), "tauri_setup_entered");
             if let Some(main_window) = app.get_webview_window("main") {
@@ -4095,6 +4103,10 @@ pub fn run() {
             );
         })
         .invoke_handler(tauri::generate_handler![
+            mermaid_preview::mermaid_preview_open,
+            mermaid_preview::mermaid_preview_read,
+            mermaid_preview::mermaid_preview_fullscreen,
+            mermaid_preview::mermaid_preview_close,
             get_shell_report,
             write_shell_log,
             diagnostics_get_debug_mode,
@@ -4144,6 +4156,7 @@ pub fn run() {
             miniapps_update,
             miniapps_delete,
             window_minimize,
+            window_open_external,
             window_toggle_maximize,
             window_close,
             window_set_system_menu_enabled,

@@ -785,6 +785,13 @@ ipcMain.handle('window:minimize', async () => {
   mainWindow?.minimize()
 })
 
+ipcMain.handle('window:open-external', async (_event, url: string) => {
+  const target = new URL(url)
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') return false
+  await shell.openExternal(target.href)
+  return true
+})
+
 ipcMain.handle('window:toggle-maximize', async () => {
   if (!mainWindow) return
   if (mainWindow.isMaximized()) {

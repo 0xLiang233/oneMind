@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import "../styles/workbench-settings.css"
+import { useEffect, useId, useRef, useState } from "react"
 import { useLocation, useOutletContext } from "react-router-dom"
 import { ActivitySettingsPanel } from "./ActivitySettingsPanel"
 import { SyncSettingsPanel } from "./SyncSettingsPanel"
-import type { LucideIcon } from "../icons"
-import { Activity, FileText, GitBranch, Grid3X3, Info, RefreshCw, Settings, Sun } from "../icons"
+import { RefreshCw } from "../icons"
 
 type OutletContext = {
   workspace: WorkspaceMeta | null
@@ -52,20 +52,34 @@ const accentValues: Array<{ value: AppPreferences["accent"]; label: string }> = 
   { value: "orange", label: "橙色" }
 ]
 
-const navGroups: Array<{ section: string; items: Array<{ key: SettingsGroup; label: string; icon: LucideIcon }> }> = [
-  { section: "外观", items: [{ key: "appearance", label: "外观", icon: Sun }] },
-  {
-    section: "通用",
-    items: [
-      { key: "general", label: "通用", icon: Settings },
-      { key: "sync", label: "同步", icon: GitBranch },
-      { key: "miniapps", label: "小程序", icon: Grid3X3 },
-      { key: "activity", label: "活跃度", icon: Activity }
-    ]
-  },
-  { section: "编辑器", items: [{ key: "editor", label: "编辑器", icon: FileText }] },
-  { section: "关于", items: [{ key: "about", label: "关于", icon: Info }] }
+const settingsCategories: Array<{ key: SettingsGroup; label: string; title: string; description: string }> = [
+  { key: "appearance", label: "外观", title: "外观与阅读", description: "让工作区保持安静，也适合你的阅读习惯。" },
+  { key: "general", label: "通用", title: "通用设置", description: "安排启动方式、快捷键和工作区位置。" },
+  { key: "sync", label: "同步", title: "工作区同步", description: "通过私有 Git 仓库，让不同设备上的工作保持一致。" },
+  { key: "miniapps", label: "小程序", title: "小程序", description: "管理常用网页入口，在工作区中随时打开。" },
+  { key: "activity", label: "活跃度", title: "活跃度", description: "最近 3 个月的使用节奏、功能分布和操作记录。" },
+  { key: "editor", label: "编辑器", title: "编辑与阅读", description: "调整文字大小和笔记打开方式，找到舒适的写作节奏。" },
+  { key: "about", label: "关于", title: "关于 OneMind", description: "版本信息与应用更新。" }
 ]
+
+function SegmentedControl<T extends string>({ label, value, options, onChange }: {
+  label: string
+  value: T
+  options: Array<{ value: T; label: string }>
+  onChange: (value: T) => void
+}) {
+  const name = useId()
+  return (
+    <div className="settings-segmented" role="group" aria-label={label}>
+      {options.map((option) => (
+        <label className="settings-segment" key={option.value}>
+          <input type="radio" name={name} value={option.value} checked={value === option.value} onChange={() => onChange(option.value)} />
+          <span>{option.label}</span>
+        </label>
+      ))}
+    </div>
+  )
+}
 
 function normalizeUrl(value: string) {
   const trimmed = value.trim()
@@ -141,7 +155,7 @@ export function SettingsPage() {
   const { workspace, defaultPath, busy, bridgeReady, handleCreateDefault, handleSelectWorkspace, workspaceSync } =
     useOutletContext<OutletContext>()
   const requestedGroup = new URLSearchParams(location.search).get("group")
-  const initialGroup = navGroups.flatMap((group) => group.items).some((item) => item.key === requestedGroup)
+  const initialGroup = settingsCategories.some((item) => item.key === requestedGroup)
     ? requestedGroup as SettingsGroup
     : "appearance"
   const [activeGroup, setActiveGroup] = useState<SettingsGroup>(initialGroup)
@@ -230,14 +244,12 @@ export function SettingsPage() {
 
   if (requestedGroup !== lastRequestedGroup) {
     setLastRequestedGroup(requestedGroup)
-    if (requestedGroup && navGroups.flatMap((group) => group.items).some((item) => item.key === requestedGroup)) {
+    if (requestedGroup && settingsCategories.some((item) => item.key === requestedGroup)) {
       setActiveGroup(requestedGroup as SettingsGroup)
     }
   }
 
-  const activeTitle = useMemo(() => {
-    return navGroups.flatMap((group) => group.items).find((item) => item.key === activeGroup)?.label ?? "设置"
-  }, [activeGroup])
+  const activeCategory = settingsCategories.find((item) => item.key === activeGroup)!
   const updatePercent = updateProgress.total > 0
     ? Math.min(100, Math.round((updateProgress.downloaded / updateProgress.total) * 100))
     : 0
@@ -495,114 +507,102 @@ export function SettingsPage() {
   }
 
   return (
-    <section className="page settings-page">
-      <div className="settings-layout settings-prototype-layout">
-        <aside className="settings-sidebar">
-          {navGroups.map((group) => (
-            <div className="settings-nav-group" key={group.section}>
-              <div className="settings-section-label">{group.section}</div>
-              {group.items.map((item) => {
-                const Icon = item.icon
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    className={activeGroup === item.key ? "settings-nav-item active" : "settings-nav-item"}
-                    onClick={() => handleGroupChange(item.key)}
-                  >
-                    <span className="settings-nav-icon">
-                      <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
-                    </span>
-                    <span className="settings-nav-label">{item.label}</span>
-                    {item.key === "sync" && pendingSyncFiles > 0 ? (
-                      <span className="settings-nav-count" aria-label={`${pendingSyncFiles} 个文件待同步`}>
-                        {pendingSyncFiles > 99 ? "99+" : pendingSyncFiles}
-                      </span>
-                    ) : null}
-                  </button>
-                )
-              })}
-              <div className="sidebar-divider" />
-            </div>
+    <section className="page settings-page workbench-settings">
+      <div className="settings-layout">
+        <nav className="settings-category-nav" aria-label="设置分类">
+          {settingsCategories.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className={activeGroup === item.key ? "settings-category active" : "settings-category"}
+              aria-current={activeGroup === item.key ? "page" : undefined}
+              onClick={() => handleGroupChange(item.key)}
+            >
+              {item.label}
+              {item.key === "sync" && pendingSyncFiles > 0 ? (
+                <span className="settings-category-count" aria-label={`${pendingSyncFiles} 个文件待同步`}>
+                  {pendingSyncFiles > 99 ? "99+" : pendingSyncFiles}
+                </span>
+              ) : null}
+            </button>
           ))}
-        </aside>
+        </nav>
 
-        <section className="settings-content">
-          <div className="settings-group-title">{activeTitle}</div>
+        <section className="settings-content" aria-labelledby="settings-group-heading">
+          <header className="settings-page-heading">
+            <h1 className="settings-group-title" id="settings-group-heading">{activeCategory.title}</h1>
+            <p>{activeCategory.description}</p>
+          </header>
 
           {activeGroup === "appearance" ? (
             <>
-              <div className="settings-row">
-                <div>
-                  <div className="notes-panel-title">主题模式</div>
-                  <p>选择界面主题外观</p>
+              <section className="settings-section" aria-labelledby="settings-appearance-heading">
+                <h2 id="settings-appearance-heading">外观</h2>
+                <div className="settings-row">
+                  <div><div className="settings-label">主题</div><p>在浅色和深色之间切换，或跟随系统。</p></div>
+                  <SegmentedControl<AppPreferences["theme"]>
+                    label="主题"
+                    value={preferences.theme}
+                    options={[{ value: "light", label: "浅色" }, { value: "dark", label: "深色" }, { value: "system", label: "跟随系统" }]}
+                    onChange={(theme) => void persistPreferences({ ...preferences, theme })}
+                  />
                 </div>
-                <div className="settings-pill-row">
-                  {[
-                    { value: "dark", label: "暗色" },
-                    { value: "light", label: "亮色" },
-                    { value: "system", label: "跟随系统" }
-                  ].map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className={preferences.theme === option.value ? "settings-pill active" : "settings-pill"}
-                      onClick={() => void persistPreferences({ ...preferences, theme: option.value as AppPreferences["theme"] })}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
+                <div className="settings-row">
+                  <div><div className="settings-label">正文大小</div><p>调整笔记编辑器正文，导航保持紧凑。可在编辑器设置中微调。</p></div>
+                  <SegmentedControl
+                    label="正文大小"
+                    value={String(preferences.editorFontSize)}
+                    options={[
+                      { value: "15", label: "标准" }, { value: "18", label: "较大" },
+                      ...(![15, 18].includes(preferences.editorFontSize) ? [{ value: String(preferences.editorFontSize), label: `${preferences.editorFontSize} px` }] : [])
+                    ]}
+                    onChange={(size) => void persistPreferences({ ...preferences, editorFontSize: Number(size) })}
+                  />
                 </div>
-              </div>
-
-              <div className="settings-row">
-                <div>
-                  <div className="notes-panel-title">强调色</div>
-                  <p>自定义界面强调色</p>
+              </section>
+              <section className="settings-section" aria-labelledby="settings-reading-heading">
+                <h2 id="settings-reading-heading">阅读</h2>
+                <div className="settings-row">
+                  <div><div className="settings-label">默认以预览模式打开</div><p>打开笔记时先阅读，需要修改时再进入编辑。</p></div>
+                  <button type="button" role="switch" className={preferences.editorDefaultMode === "preview" ? "settings-toggle active" : "settings-toggle"}
+                    aria-label="默认以预览模式打开" aria-checked={preferences.editorDefaultMode === "preview"}
+                    onClick={() => void persistPreferences({ ...preferences, editorDefaultMode: preferences.editorDefaultMode === "preview" ? "edit" : "preview" })} />
                 </div>
-                <div className="settings-swatch-row" aria-label="强调色">
-                  {accentValues.map((accent) => (
-                    <button
-                      key={accent.value}
-                      type="button"
-                      title={accent.label}
-                      className={preferences.accent === accent.value ? "settings-swatch active" : "settings-swatch"}
-                      data-accent-option={accent.value}
-                      onClick={() => void persistPreferences({ ...preferences, accent: accent.value })}
-                    />
-                  ))}
+              </section>
+              <details className="settings-personalization">
+                <summary>个性化与布局<span>强调色、侧边栏位置</span></summary>
+                <div className="settings-row">
+                  <div><div className="settings-label">强调色</div><p>保留你偏好的界面强调色。</p></div>
+                  <div className="settings-swatch-row" role="group" aria-label="强调色">
+                    {accentValues.map((accent) => (
+                      <button key={accent.value} type="button" title={accent.label} aria-label={accent.label}
+                        aria-pressed={preferences.accent === accent.value}
+                        className={preferences.accent === accent.value ? "settings-swatch active" : "settings-swatch"}
+                        data-accent-option={accent.value} onClick={() => void persistPreferences({ ...preferences, accent: accent.value })} />
+                    ))}
+                  </div>
                 </div>
-              </div>
-
-              <div className="settings-row">
-                <div>
-                  <div className="notes-panel-title">侧边栏位置</div>
-                  <p>将侧边栏移动到右侧</p>
+                <div className="settings-row">
+                  <div><div className="settings-label">侧边栏位置</div><p>将工作区侧边栏移动到右侧。</p></div>
+                  <button type="button" role="switch" className={preferences.sidebarPosition === "right" ? "settings-toggle active" : "settings-toggle"}
+                    aria-label="将侧边栏移至右侧" aria-checked={preferences.sidebarPosition === "right"}
+                    onClick={() => void persistPreferences({ ...preferences, sidebarPosition: preferences.sidebarPosition === "left" ? "right" : "left" })} />
                 </div>
-                <button
-                  type="button"
-                  className={preferences.sidebarPosition === "right" ? "settings-toggle active" : "settings-toggle"}
-                  aria-label="侧边栏位置"
-                  onClick={() =>
-                    void persistPreferences({
-                      ...preferences,
-                      sidebarPosition: preferences.sidebarPosition === "left" ? "right" : "left"
-                    })
-                  }
-                />
-              </div>
+              </details>
             </>
           ) : null}
 
           {activeGroup === "general" ? (
             <>
+              <h2 className="settings-section-title">启动与语言</h2>
               <div className="settings-row">
                 <div>
-                  <div className="notes-panel-title">启动时打开</div>
+                  <div className="settings-label">启动时打开</div>
                   <p>应用启动时的默认页面</p>
                 </div>
                 <select
                   className="settings-select"
+                  aria-label="启动时打开"
                   value={preferences.startupPage}
                   onChange={(event) =>
                     void persistPreferences({
@@ -620,11 +620,12 @@ export function SettingsPage() {
 
               <div className="settings-row">
                 <div>
-                  <div className="notes-panel-title">语言</div>
+                  <div className="settings-label">语言</div>
                   <p>界面显示语言</p>
                 </div>
                 <select
                   className="settings-select"
+                  aria-label="界面显示语言"
                   value={preferences.language}
                   onChange={(event) =>
                     void persistPreferences({
@@ -638,10 +639,11 @@ export function SettingsPage() {
                 </select>
               </div>
 
+              <h2 className="settings-section-title settings-section-spaced">快捷键与工作区</h2>
               <div className="settings-row">
                 <div>
-                  <div className="notes-panel-title">浮动随记快捷键</div>
-                  <p>用于全局唤起快速记录面板</p>
+                  <div className="settings-label">浮动随记快捷键</div>
+                  <p id="settings-shortcut-help">{recordingShortcut ? "按下组合键后按 Enter 保存，按 Esc 取消。" : "用于全局唤起快速记录面板"}</p>
                 </div>
                 <button
                   type="button"
@@ -653,6 +655,9 @@ export function SettingsPage() {
                     setStatus("请按下新的快捷键组合。")
                     window.setTimeout(() => shortcutButtonRef.current?.focus(), 0)
                   }}
+                  aria-label="录制浮动随记快捷键"
+                  aria-describedby="settings-shortcut-help"
+                  aria-pressed={recordingShortcut}
                   ref={shortcutButtonRef}
                   onKeyDown={(event) => void handleShortcutKeyDown(event)}
                 >
@@ -661,9 +666,9 @@ export function SettingsPage() {
               </div>
 
               <div className="settings-row">
-                <div style={{ flex: 1 }}>
-                  <div className="notes-panel-title">工作目录</div>
-                  <p style={{ fontSize: "12px", wordBreak: "break-all", marginTop: "4px" }}>
+                <div className="settings-workspace-copy">
+                  <div className="settings-label">工作目录</div>
+                  <p className="settings-workspace-path">
                     {workspace ? workspace.workspacePath : defaultPath || "未设置"}
                   </p>
                 </div>
@@ -707,20 +712,25 @@ export function SettingsPage() {
             <>
               <div className="settings-row settings-row-stack">
                 <div>
-                  <div className="notes-panel-title">{editingId ? "编辑网页入口" : "添加网页入口"}</div>
-                  <p>这些入口会显示在小程序页面，并持久化到当前 workspace。</p>
+                  <div className="settings-label">{editingId ? "编辑网页入口" : "添加网页入口"}</div>
+                  <p>{workspacePath ? "这些入口会显示在小程序页面，并保存到当前工作区。" : "创建或选择工作区后即可添加小程序入口。"}</p>
                 </div>
                 <div className="settings-miniapp-form">
                   <input
                     className="convert-input"
                     value={draft.name}
                     onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+                    aria-label="小程序名称"
+                    disabled={!workspacePath}
                     placeholder="名称，例如 ChatGPT"
                   />
                   <input
                     className="convert-input"
                     value={draft.url}
                     onChange={(event) => setDraft((current) => ({ ...current, url: event.target.value }))}
+                    aria-label="小程序 URL"
+                    disabled={!workspacePath}
+                    spellCheck={false}
                     placeholder="https://example.com/"
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
@@ -729,7 +739,7 @@ export function SettingsPage() {
                       }
                     }}
                   />
-                  <button type="button" className="compact" onClick={() => void handleAddMiniapp()}>
+                  <button type="button" className="compact" disabled={!workspacePath} onClick={() => void handleAddMiniapp()}>
                     {editingId ? "保存" : "添加"}
                   </button>
                   {editingId ? (
@@ -752,13 +762,13 @@ export function SettingsPage() {
                   <div className="settings-miniapp-item" key={item.id}>
                     <div className="settings-miniapp-icon">{renderMiniappIcon(item)}</div>
                     <div className="settings-miniapp-meta">
-                      <div className="notes-panel-title">{item.name}</div>
+                      <div className="settings-label">{item.name}</div>
                       <p>{item.url}</p>
                     </div>
-                    <button type="button" className="secondary compact" onClick={() => beginEditMiniapp(item)}>
+                    <button type="button" className="secondary compact" aria-label={`编辑 ${item.name}`} onClick={() => beginEditMiniapp(item)}>
                       编辑
                     </button>
-                    <button type="button" className="secondary compact danger" onClick={() => void handleDeleteMiniapp(item.id)}>
+                    <button type="button" className="secondary compact danger" aria-label={`移除 ${item.name}`} onClick={() => void handleDeleteMiniapp(item.id)}>
                       移除
                     </button>
                   </div>
@@ -778,14 +788,16 @@ export function SettingsPage() {
 
           {activeGroup === "editor" ? (
             <>
+              <h2 className="settings-section-title">笔记编辑器</h2>
               <div className="settings-row">
                 <div>
-                  <div className="notes-panel-title">默认字体大小</div>
+                  <div className="settings-label">默认字体大小</div>
                   <p>编辑器文字大小</p>
                 </div>
                 <div className="settings-slider">
                   <input
                     type="range"
+                    aria-label="默认字体大小"
                     min={13}
                     max={22}
                     value={preferences.editorFontSize}
@@ -796,19 +808,21 @@ export function SettingsPage() {
                       })
                     }
                   />
-                  <span>{preferences.editorFontSize}</span>
+                  <output aria-label="当前字号">{preferences.editorFontSize} px</output>
                 </div>
               </div>
 
               <div className="settings-row">
                 <div>
-                  <div className="notes-panel-title">编辑/预览模式</div>
+                  <div className="settings-label">编辑/预览模式</div>
                   <p>默认打开笔记时使用编辑模式</p>
                 </div>
                 <button
                   type="button"
                   className={preferences.editorDefaultMode === "edit" ? "settings-toggle active" : "settings-toggle"}
-                  aria-label="编辑/预览模式"
+                  role="switch"
+                  aria-label="默认打开笔记时使用编辑模式"
+                  aria-checked={preferences.editorDefaultMode === "edit"}
                   onClick={() =>
                     void persistPreferences({
                       ...preferences,
@@ -822,9 +836,10 @@ export function SettingsPage() {
 
           {activeGroup === "about" ? (
             <>
+              <h2 className="settings-section-title">应用</h2>
               <div className="settings-row">
                 <div>
-                  <div className="notes-panel-title">OneMind</div>
+                  <div className="settings-label">OneMind</div>
                   <p>个人 AI Agent 工作台</p>
                 </div>
                 <span className="settings-version">{appVersion ? `v${appVersion}` : "读取中"}</span>
@@ -832,7 +847,7 @@ export function SettingsPage() {
 
               <div className="settings-row settings-update-row">
                 <div className="settings-update-copy">
-                  <div className="notes-panel-title">检查更新</div>
+                  <div className="settings-label">检查更新</div>
                   <p className={updatePhase === "error" ? "settings-update-message error" : "settings-update-message"} aria-live="polite">
                     {updateMessage}
                   </p>
@@ -862,7 +877,7 @@ export function SettingsPage() {
             </>
           ) : null}
 
-          {status ? <div className="settings-status">{status}</div> : null}
+          {status ? <div className="settings-status" role="status">{status}</div> : null}
         </section>
       </div>
     </section>

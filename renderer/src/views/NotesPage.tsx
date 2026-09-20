@@ -1,8 +1,10 @@
+import "../styles/workbench-writing.css"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useLocation, useOutletContext } from "react-router-dom"
-import { MarkdownEditor } from "../components/MarkdownEditor"
+import { MarkdownEditor, type MarkdownEditorHandle } from "../components/MarkdownEditor"
 import { trackActivity } from "../activity"
 import { registerSyncSaveParticipant } from "../sync/saveBarrier"
+import { Check, Circle, Clock, CodeXml, FileText, Info, PenLine } from "../icons"
 
 type OutletContext = {
   workspace: WorkspaceMeta | null
@@ -20,6 +22,8 @@ export function NotesPage() {
   const [status, setStatus] = useState("从侧边栏选择笔记开始编辑")
   const [editorMode, setEditorMode] = useState<"rich" | "source">("rich")
   const savePromiseRef = useRef<Promise<void> | null>(null)
+  const markdownEditorRef = useRef<MarkdownEditorHandle>(null)
+  const savedContentRef = useRef("")
   const sourceEditorRef = useRef<HTMLTextAreaElement | null>(null)
 
   const selectedName = useMemo(() => {
@@ -28,6 +32,11 @@ export function NotesPage() {
   }, [selectedSidebarPath])
 
   const isDirty = content !== savedContent
+  const documentReady = Boolean(selectedSidebarPath && loadedPath === selectedSidebarPath)
+  const savedState = !saving && !isDirty && ["已加载", "已保存", "已同步"].includes(status)
+  const statusLabel = !selectedSidebarPath ? "" : !documentReady ? status
+    : saving ? "正在保存…" : isDirty ? "尚未保存" : status === "已加载" ? "已保存" : status
+  const StatusIcon = !documentReady || saving ? Clock : isDirty ? Circle : savedState ? Check : Info
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -42,6 +51,7 @@ export function NotesPage() {
       if (!selectedSidebarPath) {
         setLoadedPath(null)
         setContent("")
+        savedContentRef.current = ""
         setSavedContent("")
         setEditorMode("rich")
         setStatus("从侧边栏选择笔记开始编辑")
@@ -54,6 +64,7 @@ export function NotesPage() {
         const next = await window.oneMind.notes.read(selectedSidebarPath)
         if (cancelled) return
         setContent(next)
+        savedContentRef.current = next
         setSavedContent(next)
         setLoadedPath(selectedSidebarPath)
         setStatus("已加载")
@@ -67,8 +78,9 @@ export function NotesPage() {
       } catch (e) {
         if (cancelled) return
         setContent("")
+        savedContentRef.current = ""
         setSavedContent("")
-        setLoadedPath(selectedSidebarPath)
+        setLoadedPath(null)
         setStatus("无法加载文件: " + String(e))
       }
     }
@@ -79,39 +91,40 @@ export function NotesPage() {
   }, [selectedSidebarPath, workspace?.workspacePath])
 
   const handleSave = useCallback(async () => {
-    if (!selectedSidebarPath) return
+    if (!selectedSidebarPath || loadedPath !== selectedSidebarPath) return
     if (savePromiseRef.current) return savePromiseRef.current
 
-    const contentToSave = content
+    const readCurrentContent = () => markdownEditorRef.current?.getMarkdown() ?? sourceEditorRef.current?.value ?? content
     const operation = (async () => {
-      setSaving(true)
-      await window.oneMind.notes.write(selectedSidebarPath, contentToSave)
-      setSavedContent(contentToSave)
+      // Milkdown's change notification is debounced. Read the current document
+      // synchronously so typing then immediately switching tabs loses nothing.
+      let contentToSave = readCurrentContent()
+      while (contentToSave !== savedContentRef.current) {
+        setSaving(true)
+        const written = await window.oneMind.notes.write(selectedSidebarPath, contentToSave)
+        if (!written) throw new Error("笔记未能写入工作区")
+        trackActivity(workspace?.workspacePath, {
+          module: "notes", action: "save", targetType: "note",
+          targetId: selectedSidebarPath, targetLabel: selectedName
+        })
+        savedContentRef.current = contentToSave
+        setSavedContent(contentToSave)
+        const latest = readCurrentContent()
+        setContent(latest)
+        contentToSave = latest
+      }
       setStatus("已保存")
-      trackActivity(workspace?.workspacePath, {
-        module: "notes",
-        action: "save",
-        targetType: "note",
-        targetId: selectedSidebarPath,
-        targetLabel: selectedName
-      })
     })().finally(() => {
       setSaving(false)
       savePromiseRef.current = null
     })
     savePromiseRef.current = operation
     return operation
-  }, [content, selectedName, selectedSidebarPath, workspace?.workspacePath])
+  }, [content, loadedPath, selectedSidebarPath, selectedName, workspace?.workspacePath])
 
   useEffect(() => {
-    return registerSyncSaveParticipant(async () => {
-      if (content !== savedContent) {
-        await handleSave()
-      } else if (savePromiseRef.current) {
-        await savePromiseRef.current
-      }
-    })
-  }, [content, handleSave, savedContent])
+    return registerSyncSaveParticipant(handleSave)
+  }, [handleSave])
 
   useEffect(() => {
     async function reloadAfterSync() {
@@ -119,6 +132,7 @@ export function NotesPage() {
       try {
         const next = await window.oneMind.notes.read(selectedSidebarPath)
         setContent(next)
+        savedContentRef.current = next
         setSavedContent(next)
         setStatus("已同步")
       } catch {
@@ -132,12 +146,13 @@ export function NotesPage() {
   useEffect(() => {
     if (!selectedSidebarPath || !isDirty || saving) return
     const timer = window.setTimeout(() => {
-      void handleSave()
+      void handleSave().catch((error: unknown) => setStatus(`保存失败: ${String(error)}`))
     }, 900)
     return () => window.clearTimeout(timer)
   }, [handleSave, isDirty, saving, selectedSidebarPath])
 
   function toggleSourceMode() {
+    if (editorMode === "rich") setContent(markdownEditorRef.current?.getMarkdown() ?? content)
     setEditorMode((current) => current === "source" ? "rich" : "source")
   }
 
@@ -170,47 +185,42 @@ export function NotesPage() {
   }
 
   return (
-    <section className="page notes-workspace-page">
+    <section className="page notes-workspace-page writing-notes">
       <div className="md-workspace">
         {/* Header */}
         <div className="md-editor-toolbar">
           <div className="notes-editor-title-group">
-            <div className="md-document-title">{selectedName}</div>
-            {selectedSidebarPath ? <div className="md-ai-badge"><span className="md-ai-badge-dot" />AI 已整理</div> : null}
+            <FileText size={16} aria-hidden="true" />
+            <div className="md-document-title" title={selectedName}>{selectedName.replace(/\.md$/i, "")}</div>
           </div>
           <div className="notes-editor-actions">
-            <div className="notes-status">{saving ? "正在自动保存..." : status}</div>
+            <div className="notes-status" role="status" aria-live="polite" aria-atomic="true" title={statusLabel}>
+              {statusLabel && <><StatusIcon aria-hidden="true" /><span>{statusLabel}</span></>}
+            </div>
             {selectedSidebarPath ? (
-              <div className="notes-more-menu">
-                <button className="notes-more-button" type="button" aria-label="更多" aria-haspopup="menu">
-                  <span />
-                  <span />
-                  <span />
-                </button>
-                <div className="notes-more-panel" role="menu">
-                  <button
-                    type="button"
-                    className={`notes-more-item ${editorMode === "source" ? "active" : ""}`}
-                    role="menuitemcheckbox"
-                    aria-checked={editorMode === "source"}
-                    onClick={toggleSourceMode}
-                  >
-                    <span className="notes-more-item-label">源码模式</span>
-                    <span className="notes-more-check" aria-hidden="true">{editorMode === "source" ? "✓" : ""}</span>
-                  </button>
-                </div>
-              </div>
+              <button
+                className="notes-mode-button"
+                type="button"
+                aria-label={editorMode === "source" ? "返回编辑模式" : "查看 Markdown 源码"}
+                title={editorMode === "source" ? "返回编辑模式" : "查看 Markdown 源码"}
+                aria-pressed={editorMode === "source"}
+                disabled={!documentReady}
+                onClick={toggleSourceMode}
+              >
+                {editorMode === "source" ? <PenLine size={16} aria-hidden="true" /> : <CodeXml size={16} aria-hidden="true" />}
+              </button>
             ) : null}
           </div>
         </div>
 
         {/* Editor */}
-        <div className="md-editor-stage">
+        <div className="md-editor-stage" aria-busy={Boolean(selectedSidebarPath && loadedPath !== selectedSidebarPath)}>
           {selectedSidebarPath && loadedPath === selectedSidebarPath ? (
             editorMode === "source" ? (
               <textarea
                 ref={sourceEditorRef}
                 className="notes-source-editor"
+                aria-label={`${selectedName} · Markdown 源码`}
                 value={content}
                 onChange={(event) => setContent(event.target.value)}
                 onPaste={(event) => void handleSourcePaste(event)}
@@ -218,6 +228,7 @@ export function NotesPage() {
               />
             ) : (
               <MarkdownEditor
+                ref={markdownEditorRef}
                 key={selectedSidebarPath}
                 value={content}
                 onChange={setContent}

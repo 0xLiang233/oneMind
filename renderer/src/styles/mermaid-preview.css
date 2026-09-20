@@ -1,0 +1,23 @@
+/* Diagram-first surface: the canvas gets all space below a compact tool strip. */
+.mermaid-preview-page { height: 100dvh; display: flex; flex-direction: column; color: var(--color-text-primary); background: var(--color-bg-base); }
+.mermaid-preview-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; padding: 12px 20px; border-bottom: 1px solid var(--color-border-subtle); }
+.mermaid-preview-heading { display: flex; align-items: baseline; gap: 12px; }
+.mermaid-preview-heading strong { font-size: 14px; font-weight: 600; }
+.mermaid-preview-heading span, .mermaid-preview-footer { color: var(--color-text-tertiary); font-size: 12px; }
+.mermaid-preview-controls { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.mermaid-preview-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--color-text-secondary); box-shadow: none; font-size: 12px; }
+.mermaid-preview-controls button:hover:not(:disabled), .mermaid-preview-controls button[aria-pressed="true"] { background: var(--color-bg-hover); color: var(--color-text-primary); }
+.mermaid-preview-controls button:disabled { opacity: .4; }
+.mermaid-preview-controls svg { width: 16px; height: 16px; }
+.mermaid-preview-controls output { min-width: 48px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; }
+.mermaid-preview-separator { height: 18px; width: 1px; margin-inline: 6px; background: var(--color-border-subtle); }
+.mermaid-preview-viewport { flex: 1; min-height: 0; overflow: auto; padding: 24px; cursor: grab; touch-action: none; user-select: none; overscroll-behavior: contain; }
+.mermaid-preview-viewport[data-dragging="true"] { cursor: grabbing; }
+.mermaid-preview-canvas { display: flex; align-items: center; justify-content: center; }
+.mermaid-preview-diagram { flex: none; }
+.mermaid-preview-diagram svg { display: block; width: 100% !important; height: 100% !important; max-width: none !important; }
+.mermaid-preview-footer { display: flex; justify-content: space-between; gap: 12px; padding: 8px 20px; border-top: 1px solid var(--color-border-subtle); }
+.mermaid-preview-loading { text-align: center; color: var(--color-text-tertiary); }
+.mermaid-preview-error { padding: 12px 20px; color: var(--color-danger); overflow-wrap: anywhere; }
+.mermaid-preview-page :focus-visible { outline: 2px solid var(--color-text-secondary); outline-offset: -2px; }
+@media (max-width: 700px) { .mermaid-preview-heading span { display: none; } .mermaid-preview-header { padding: 8px 12px; } .mermaid-preview-controls button { padding-inline: 8px; } }

@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld('oneMind', {
     bridgeReady: true
   },
   window: {
+    openExternal: (url: string) => ipcRenderer.invoke('window:open-external', url) as Promise<boolean>,
     minimize: () => ipcRenderer.invoke('window:minimize') as Promise<void>,
     toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize') as Promise<void>,
     close: () => ipcRenderer.invoke('window:close') as Promise<void>,
