@@ -6,9 +6,6 @@ import { check as checkForUpdate, type Update } from "@tauri-apps/plugin-updater
 let pendingUpdate: Update | null = null
 
 export function createTauriBridge(): Window["oneMind"] {
-  if (navigator.userAgent.includes("Windows")) {
-    document.documentElement.dataset.nativeBackdrop = "mica"
-  }
   return {
     mermaidPreview: {
       open: (source, theme) => invoke<void>("mermaid_preview_open", { source, theme }),

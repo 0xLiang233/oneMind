@@ -1,5 +1,7 @@
 /* Approved workbench: one paper panel, quiet tabs, restrained shell material.
-   Existing bridge/native backdrop detection stays authoritative. */
+   Keep an opaque base in the renderer AND the native main window. Windows
+   compatibility mode can ignore Mica, so a UA or backdrop flag is not proof
+   that desktop contents behind this window will be obscured. */
 .app-shell {background:radial-gradient(ellipse at 0% 15%,var(--workbench-wash),transparent 65%),var(--workbench-shell);font-family:var(--font-ui)}
 .app-shell .app-chrome,.app-shell .chrome-brand,.app-shell .sidebar,.app-shell .sidebar-bottom {background:transparent;border:0}
 .app-shell .app-chrome,.app-shell.sidebar-collapsed .app-chrome {grid-template-columns:var(--sidebar-expanded-width) minmax(0,1fr) minmax(48px,.12fr) 132px}
@@ -74,20 +76,15 @@
 .workbench-tab-switcher {display:grid;place-items:center;flex:0 0 30px;width:30px;height:28px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--color-text-secondary);cursor:pointer}
 .workbench-tab-switcher:hover,.workbench-tab-switcher[aria-expanded="true"] {background:var(--color-bg-hover);color:var(--color-text-primary)}
 .app-shell button:focus-visible,.app-shell select:focus-visible {outline:2px solid var(--color-text-tertiary);outline-offset:-2px}
-html[data-native-backdrop="mica"] .app-shell {background:var(--workbench-tint)}
-html[data-native-backdrop="mica"] .app-shell .app-chrome,html[data-native-backdrop="mica"] .app-shell .sidebar {background:transparent}
 @media(max-width:760px){.app-shell .workspace-layout{padding-right:5px;padding-bottom:5px}.app-shell .content{border-radius:12px}.workbench-toolbar{padding-inline:6px}.workbench-tab{max-width:160px}.workbench-tab .tab-item{max-width:134px}}
 @media(hover:none){.workbench-tab .tab-item-close{opacity:1}}
-@media(prefers-reduced-transparency:reduce),(forced-colors:active){html[data-native-backdrop="mica"] .app-shell,.app-shell{background:var(--workbench-shell);backdrop-filter:none}}
+@media(prefers-reduced-transparency:reduce),(forced-colors:active){.app-shell{background:var(--workbench-shell);backdrop-filter:none}}
 @media(prefers-reduced-motion:reduce){.app-shell *{animation:none!important;transition:none!important}}
 
 /* Structural rules previously supplied by the retired theme layers. */
 .tree-folder-icon .tree-folder-open-glyph { display: none; }
 .tree-folder[open] > summary .tree-folder-closed-glyph { display: none; }
 .tree-folder[open] > summary .tree-folder-open-glyph { display: block; }
-html[data-native-backdrop="mica"]:has(.app-shell),
-html[data-native-backdrop="mica"]:has(.app-shell) body,
-html[data-native-backdrop="mica"]:has(.app-shell) #root { background: transparent; }
 .app-shell .brand-mark.small { background: var(--color-text-primary); color: var(--color-bg-base); box-shadow: none; }
 
 .workbench-tab-switcher { -webkit-app-region: no-drag; }
