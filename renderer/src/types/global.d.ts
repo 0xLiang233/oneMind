@@ -305,6 +305,8 @@ interface Window {
       open: (workspacePath: string, appEntry: SystemAppEntry) => Promise<boolean>
     }
     miniappView: {
+      // Optional: shells without native process notifications keep the same contract.
+      onFailed?: (callback: (failure: { viewKey: string; reason: "unresponsive" | "crashed" }) => void) => () => void
       show: (input: { viewKey: string; url: string; partition: string; bounds: ViewBounds }) => Promise<boolean>
       setBounds: (input: { viewKey: string; bounds: ViewBounds }) => Promise<boolean>
       hide: () => Promise<boolean>

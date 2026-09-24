@@ -2,27 +2,11 @@ import "../styles/workbench-sources.css"
 import { useEffect, useRef, useState } from "react"
 import { useLocation, useNavigate, useOutletContext } from "react-router-dom"
 import { trackActivity } from "../activity"
+import { useNativeMiniappView } from "../miniapps/useNativeMiniappView"
+import { nativeViewQueue } from "../miniapps/nativeViewQueue"
 import { ChevronLeft, Grid3X3, MoveRight, RefreshCw } from "../icons"
 
 type OutletContext = { workspace: WorkspaceMeta | null }
-type NativeStatus = { key: string; state: "ready" | "unavailable" | "error"; message: string }
-
-// Serialize native lifecycle operations across route remounts. In particular, a
-// slow show must finish before its cleanup closes that view or another view opens.
-let nativeViewOperations: Promise<void> = Promise.resolve()
-let nativeViewGeneration = 0
-
-function queueNativeViewOperation(operation: () => Promise<void>) {
-  nativeViewOperations = nativeViewOperations.then(operation).catch((error: unknown) => {
-    writeMiniappLog("miniapp_renderer_operation_failed", String(error))
-  })
-}
-
-function writeMiniappLog(message: string, context?: string) {
-  void window.oneMind?.diagnostics?.writeLog("renderer-debug", message, context).catch((error: unknown) => {
-    console.warn("Failed to write miniapp log:", error)
-  })
-}
 
 function isWebUrl(value: string) {
   try { return ["http:", "https:"].includes(new URL(value).protocol) } catch { return false }
@@ -38,7 +22,6 @@ export function SourcesPage() {
   const navigate = useNavigate()
   const [catalog, setCatalog] = useState<{ workspacePath: string; items: MiniappSource[]; error: string } | null>(null)
   const [failedIcons, setFailedIcons] = useState<Record<string, boolean>>({})
-  const [nativeStatus, setNativeStatus] = useState<NativeStatus | null>(null)
   const [actionError, setActionError] = useState("")
   const [reloadPending, setReloadPending] = useState(false)
   const [attempt, setAttempt] = useState(0)
@@ -50,7 +33,9 @@ export function SourcesPage() {
   const activeSourceId = params.get("sourceId") ?? activeTitle
   const nativeKey = `${activeSourceId}:${activeUrl}:${attempt}`
   const validUrl = activeUrl ? isWebUrl(activeUrl) : false
-  const currentNative = nativeStatus?.key === nativeKey ? nativeStatus : null
+  const currentNative = useNativeMiniappView({
+    viewKey: activeSourceId, url: activeUrl, validUrl, nativeKey, hostRef: webviewHostRef
+  })
   const currentCatalog = catalog?.workspacePath === workspace?.workspacePath ? catalog : null
   const items = currentCatalog?.items ?? []
   const catalogLoading = Boolean(workspace && !currentCatalog)
@@ -67,117 +52,6 @@ export function SourcesPage() {
     return () => { cancelled = true }
   }, [workspace, attempt])
 
-  useEffect(() => {
-    const generation = ++nativeViewGeneration
-    let disposed = false
-    const isCurrent = () => !disposed && generation === nativeViewGeneration
-
-    if (!activeUrl || !validUrl) {
-      queueNativeViewOperation(async () => {
-        if (!isCurrent()) return
-        writeMiniappLog("miniapp_renderer_hide_no_active_url", `pathname=${location.pathname}`)
-        await window.oneMind.miniappView.hide()
-      })
-      return () => { disposed = true }
-    }
-
-    const host = webviewHostRef.current
-    if (!host) {
-      writeMiniappLog("miniapp_renderer_host_missing", `sourceId=${activeSourceId} url=${activeUrl}`)
-      return () => { disposed = true }
-    }
-
-    const viewKey = activeSourceId
-    const partition = `persist:onemind-miniapp-${activeSourceId}`
-    const hasOverlay = () => Boolean(document.body.querySelector(".workbench-context-menu, .convert-overlay"))
-    let overlayOpen = hasOverlay()
-    let frame = 0
-    let syncQueued = false
-    let attemptedShow = false
-    let hasShownView = false
-    let visible = false
-    let lastBounds: ViewBounds | null = null
-
-    async function hideForOverlay() {
-      writeMiniappLog("miniapp_renderer_hide_for_overlay", `viewKey=${viewKey}`)
-      if (await window.oneMind.miniappView.hide()) visible = false
-    }
-
-    const reconcileNativeView = () => {
-      if (!isCurrent() || syncQueued) return
-      syncQueued = true
-      queueNativeViewOperation(async () => {
-        syncQueued = false
-        if (!isCurrent()) return
-        try {
-          // Check live DOM at execution, not at enqueue: a popup can close or
-          // another popup can open while a previous bridge request is pending.
-          if (hasOverlay()) {
-            if (visible) await hideForOverlay()
-            return
-          }
-          if (attemptedShow && !hasShownView) return
-          const rect = host.getBoundingClientRect()
-          const bounds = { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) }
-          if (bounds.width <= 0 || bounds.height <= 0) return
-          if (!visible) {
-            attemptedShow = true
-            writeMiniappLog("miniapp_renderer_show", `viewKey=${viewKey} bounds=${JSON.stringify(bounds)} restore=${hasShownView}`)
-            // Both shells reuse the same viewKey without navigating. Never use
-            // reload/close for popup dismissal; preserve remote history/forms.
-            const shown = await window.oneMind.miniappView.show({ viewKey, url: activeUrl, partition, bounds })
-            hasShownView = shown
-            visible = shown
-            lastBounds = bounds
-            if (!isCurrent()) return // The queued cleanup owns this stale view.
-            setNativeStatus({ key: nativeKey, state: shown ? "ready" : "unavailable", message: shown ? "内置浏览视图已连接" : "当前环境无法打开内置浏览视图。" })
-            // An overlay may have appeared during the asynchronous initial show.
-            if (shown && hasOverlay()) await hideForOverlay()
-            return
-          }
-          if (lastBounds && bounds.x === lastBounds.x && bounds.y === lastBounds.y && bounds.width === lastBounds.width && bounds.height === lastBounds.height) return
-          writeMiniappLog("miniapp_renderer_set_bounds", `viewKey=${viewKey} bounds=${JSON.stringify(bounds)}`)
-          await window.oneMind.miniappView.setBounds({ viewKey, bounds })
-          lastBounds = bounds
-        } catch (error: unknown) {
-          writeMiniappLog("miniapp_renderer_sync_failed", `viewKey=${viewKey} error=${String(error)}`)
-          if (isCurrent()) setNativeStatus({ key: nativeKey, state: "error", message: "内置浏览视图未能更新，请重试。" })
-        }
-      })
-    }
-
-    const syncNativeView = () => {
-      window.cancelAnimationFrame(frame)
-      frame = window.requestAnimationFrame(reconcileNativeView)
-    }
-    const observer = new ResizeObserver(syncNativeView)
-    observer.observe(host)
-    const overlayObserver = new MutationObserver(() => {
-      const next = hasOverlay()
-      if (next === overlayOpen) return
-      overlayOpen = next
-      // Hide promptly on menu insertion, without waiting for the next frame.
-      reconcileNativeView()
-    })
-    overlayObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] })
-    window.addEventListener("resize", syncNativeView)
-    syncNativeView()
-
-    return () => {
-      disposed = true
-      window.cancelAnimationFrame(frame)
-      observer.disconnect()
-      overlayObserver.disconnect()
-      window.removeEventListener("resize", syncNativeView)
-      // Do not close for overlays. Only route/key changes release the native
-      // view, after any in-flight show/hide has settled, before the next show.
-      queueNativeViewOperation(async () => {
-        writeMiniappLog("miniapp_renderer_cleanup_close", `viewKey=${viewKey}`)
-        await window.oneMind.miniappView.close(viewKey)
-      })
-    }
-  }, [activeSourceId, activeUrl, location.pathname, nativeKey, validUrl])
-
   function openSource(source: MiniappSource) {
     setActionError("")
     navigate(`/sources?${new URLSearchParams({ sourceId: source.id, title: source.name, url: source.url })}`)
@@ -190,7 +64,7 @@ export function SourcesPage() {
     if (currentNative?.state !== "ready") { setAttempt((value) => value + 1); return }
     setReloadPending(true)
     try {
-      const reloaded = await window.oneMind.miniappView.reload({ viewKey: activeSourceId, url: activeUrl })
+      const reloaded = await nativeViewQueue.run(() => window.oneMind.miniappView.reload({ viewKey: activeSourceId, url: activeUrl }))
       if (!reloaded) setActionError("当前环境无法刷新此网页。")
     } catch { setActionError("刷新失败，请重试。") }
     finally { setReloadPending(false) }

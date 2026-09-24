@@ -137,6 +137,15 @@ export function createTauriBridge(): Window["oneMind"] {
       open: (workspacePath, appEntry) => invoke<boolean>("system_apps_open", { workspacePath, appEntry })
     },
     miniappView: {
+      onFailed: (callback) => {
+        let disposed = false
+        let unlisten: (() => void) | undefined
+        void listen<{ viewKey: string; reason: "unresponsive" | "crashed" }>("miniapp-view-failed", event => {
+          if (!disposed) callback(event.payload)
+        }).then(next => { if (disposed) next(); else unlisten = next })
+          .catch((error: unknown) => console.warn("Miniapp health listener failed:", error))
+        return () => { disposed = true; unlisten?.() }
+      },
       show: ({ viewKey, url, partition, bounds }) =>
         invoke<boolean>("miniapp_view_show", { viewKey, url, partition, bounds }),
       setBounds: ({ viewKey, bounds }) => invoke<boolean>("miniapp_view_set_bounds", { viewKey, bounds }),

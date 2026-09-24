@@ -70,6 +70,9 @@ export function FloatNotePage() {
   const resizeFrameRef = useRef(0)
   const focusTimersRef = useRef<number[]>([])
   const focusRequestIdRef = useRef(0)
+  const saveRequestIdRef = useRef(0)
+  const saveBusyRef = useRef(false)
+  const saveFeedbackTimerRef = useRef<number | null>(null)
   const appSearchRequestIdRef = useRef(0)
   const debugEnabledRef = useRef(false)
   const requestInputFocusRef = useRef<() => void>(() => undefined)
@@ -112,7 +115,8 @@ export function FloatNotePage() {
       return
     }
     writeDebugLog("float_note_focus_input_before", getFocusSnapshot(stage))
-    if (!input || input.disabled) {
+    // A delayed retry must not pull focus back after the user switches apps.
+    if (!input || input.disabled || !document.hasFocus() || document.visibilityState !== "visible") {
       writeDebugLog("float_note_focus_input_skipped", getFocusSnapshot("skipped"))
       return
     }
@@ -186,7 +190,10 @@ export function FloatNotePage() {
       const nextHeight = pendingWindowHeightRef.current
       if (nextHeight === lastWindowHeightRef.current) return
       lastWindowHeightRef.current = nextHeight
-      void window.oneMind.floatNote.setHeight(nextHeight)
+      void window.oneMind.floatNote.setHeight(nextHeight).catch((error: unknown) => {
+        if (lastWindowHeightRef.current === nextHeight) lastWindowHeightRef.current = 0
+        console.warn("Failed to resize float note:", error)
+      })
     })
   }
 
@@ -340,6 +347,7 @@ export function FloatNotePage() {
       disposed = true
       unsubscribe()
       clearFocusTimers()
+      resetSaveFeedback()
       if (resizeFrameRef.current) {
         window.cancelAnimationFrame(resizeFrameRef.current)
       }
@@ -412,7 +420,19 @@ export function FloatNotePage() {
     return () => observer.disconnect()
   }, [])
 
+  function resetSaveFeedback() {
+    // A previous save may still finish on disk, but must never clear or hide a
+    // freshly reopened palette. Cancelling feedback does not cancel persistence.
+    saveRequestIdRef.current += 1
+    saveBusyRef.current = false
+    if (saveFeedbackTimerRef.current !== null) {
+      window.clearTimeout(saveFeedbackTimerRef.current)
+      saveFeedbackTimerRef.current = null
+    }
+  }
+
   function resetPalette() {
+    resetSaveFeedback()
     cancelSystemAppSearch()
     setValue("")
     setActiveIndex(0)
@@ -425,6 +445,8 @@ export function FloatNotePage() {
   }
 
   function switchMode() {
+    resetSaveFeedback()
+    setSaveState("idle")
     cancelSystemAppSearch()
     setMode((current) => {
       const index = modes.findIndex((item) => item.key === current)
@@ -447,33 +469,51 @@ export function FloatNotePage() {
 
   async function saveQuickNote(closeAfterSave: boolean) {
     const content = value.trim()
-    if (!content || saveState === "saving") return
+    if (!content || saveBusyRef.current || saveState !== "idle") return
+    const requestId = ++saveRequestIdRef.current
+    const isCurrent = () => saveRequestIdRef.current === requestId
+    saveBusyRef.current = true
     setSaveState("saving")
     setStatus("")
-    const activeWorkspace = workspace ?? await window.oneMind.workspace.initDefault()
-    setWorkspace(activeWorkspace)
-    await window.oneMind.quickNotes.create(activeWorkspace.workspacePath, content)
-    trackActivity(activeWorkspace.workspacePath, {
-      module: "quickNote",
-      action: "create",
-      targetType: "quickNote",
-      targetLabel: content.slice(0, 24) || "快速记录"
-    })
-    setSaveState("saved")
-    setStatus("已保存")
-    if (closeAfterSave) {
-      window.setTimeout(() => {
-        resetPalette()
-        void window.oneMind.floatNote.hide()
+    try {
+      const activeWorkspace = workspace ?? await window.oneMind.workspace.initDefault()
+      await window.oneMind.quickNotes.create(activeWorkspace.workspacePath, content)
+      trackActivity(activeWorkspace.workspacePath, {
+        module: "quickNote",
+        action: "create",
+        targetType: "quickNote",
+        targetLabel: content.slice(0, 24) || "快速记录"
+      })
+      if (!isCurrent()) return
+      setWorkspace(activeWorkspace)
+      setSaveState("saved")
+      setStatus("已保存")
+      saveFeedbackTimerRef.current = window.setTimeout(() => {
+        saveFeedbackTimerRef.current = null
+        if (!isCurrent()) return
+        if (closeAfterSave) {
+          resetPalette()
+          void window.oneMind.floatNote.hide().catch((error: unknown) => {
+            console.warn("Failed to hide saved float note:", error)
+          })
+        } else {
+          setValue("")
+          setStatus("")
+          setSaveState("idle")
+          requestInputFocus()
+        }
       }, 520)
-      return
+    } catch (error: unknown) {
+      console.warn("Failed to save float note:", error)
+      if (isCurrent()) {
+        // Preserve the draft and restore editing instead of leaving a disabled
+        // textarea that looks like a frozen application after an I/O failure.
+        setSaveState("idle")
+        setStatus("保存失败，内容已保留，请重试。")
+      }
+    } finally {
+      if (isCurrent()) saveBusyRef.current = false
     }
-    window.setTimeout(() => {
-      setValue("")
-      setStatus("")
-      setSaveState("idle")
-      requestInputFocus()
-    }, 520)
   }
 
   async function runToolResult(result: ToolResult | undefined) {

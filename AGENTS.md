@@ -26,7 +26,9 @@ Prefer existing renderer bridge patterns before adding new platform APIs. Tauri-
 
 ## Testing Guidelines
 
-There is no dedicated test suite configured yet. For now, verify changes with `pnpm build:tauri` for Tauri work and, when practical, `pnpm --dir renderer lint`. For UI changes, run `pnpm dev:tauri` and check the actual Tauri window because browser-only previews cannot cover desktop shell behavior.
+Run `pnpm --dir renderer test` (Node 22 with TypeScript stripping) and `pnpm --dir renderer lint` for renderer changes. Run `cargo test --manifest-path desktop/tauri/src-tauri/Cargo.toml --lib` and `pnpm build:tauri` for Tauri changes. For UI changes, restart with `pnpm dev:tauri` and check the actual Tauri window because browser-only previews cannot cover desktop shell behavior.
+
+See `docs/desktop-stability.md` for threading/lifecycle invariants, diagnostics, regression checks, and the local unsigned-build override when an updater signing key is unavailable. Keep release signing configuration intact. Tests must use disposable workspaces; do not terminate third-party WebView2 processes or reset real miniapp profiles.
 
 Run Electron validation only when the change touches Electron code, the compatibility layer, or the user explicitly asks for it. In those cases, use `pnpm build:desktop`, `pnpm dev:desktop`, and `pnpm --dir desktop/electron lint` as appropriate.
 

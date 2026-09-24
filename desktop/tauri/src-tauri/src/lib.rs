@@ -2,8 +2,18 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use windows::core::Interface;
+mod diagnostics;
+mod watchdog;
+use diagnostics::{
+    append_boot_log_line, append_boot_log_line_with_context, append_debug_log, append_global_log,
+};
+mod float_note;
 mod float_note_focus;
 mod mermaid_preview;
+mod miniapp;
+mod miniapp_health;
+mod runtime;
+mod storage_commands;
 mod sync;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
@@ -16,15 +26,10 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::Mutex,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::webview::{NewWindowResponse, WebviewBuilder};
-use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Url, WebviewUrl,
-    WebviewWindow, WebviewWindowBuilder, WindowEvent,
-};
+use tauri::{AppHandle, Manager, Url, WebviewWindow, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 #[cfg(windows)]
 use windows::Win32::Foundation::MAX_PATH;
 #[cfg(windows)]
@@ -240,15 +245,6 @@ struct AppPreferences {
 }
 
 #[derive(Default)]
-struct ShortcutStateStore {
-    float_note_shortcut: Mutex<Option<String>>,
-    float_note_suspended_shortcut: Mutex<Option<String>>,
-    float_note_is_pressed: Mutex<bool>,
-    float_note_last_press: Mutex<Option<Instant>>,
-    float_note_last_activation: Mutex<Option<Instant>>,
-}
-
-#[derive(Default)]
 struct SystemAppStore {
     cached_apps: Mutex<Option<Vec<SystemAppEntry>>>,
 }
@@ -266,11 +262,18 @@ fn now_iso_like() -> String {
 }
 
 fn now_id() -> String {
-    SystemTime::now()
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static LAST_ID: AtomicU64 = AtomicU64::new(0);
+    let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis()
-        .to_string()
+        .as_millis() as u64;
+    let previous = LAST_ID
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
+            Some(now.max(last.saturating_add(1)))
+        })
+        .unwrap();
+    now.max(previous.saturating_add(1)).to_string()
 }
 
 fn default_preferences() -> AppPreferences {
@@ -1414,182 +1417,6 @@ fn resolve_miniapp_icon_url(url: &str) -> Option<String> {
     ))
 }
 
-fn ensure_float_note_window(app: &AppHandle) -> Result<WebviewWindow, String> {
-    if let Some(window) = app.get_webview_window("float-note") {
-        append_debug_log(app, "float_note_window_reuse", None);
-        return Ok(window);
-    }
-
-    append_debug_log(app, "float_note_window_create_start", None);
-    let window = WebviewWindowBuilder::new(
-        app,
-        "float-note",
-        WebviewUrl::App("index.html#/float-note".into()),
-    )
-    .title("OneMind Float Note")
-    .inner_size(724.0, 150.0)
-    .min_inner_size(520.0, 150.0)
-    .resizable(false)
-    .decorations(false)
-    .transparent(true)
-    .shadow(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .visible(false)
-    .build()
-    .map_err(|e| format!("failed to create float note window: {e}"))?;
-
-    let focus_window = window.clone();
-    window.on_window_event(move |event| {
-        if matches!(event, WindowEvent::Focused(true)) {
-            append_debug_log(
-                &focus_window.app_handle(),
-                "float_note_window_event_focused",
-                Some("focused=true"),
-            );
-            request_float_note_renderer_focus(
-                &focus_window.app_handle(),
-                &focus_window,
-                "window_event",
-            );
-        } else if matches!(event, WindowEvent::Focused(false)) {
-            let app_handle = focus_window.app_handle().clone();
-            let blur_window = focus_window.clone();
-            append_debug_log(
-                &app_handle,
-                "float_note_window_event_focused",
-                Some("focused=false"),
-            );
-            tauri::async_runtime::spawn(async move {
-                std::thread::sleep(std::time::Duration::from_millis(
-                    FLOAT_NOTE_BLUR_HIDE_DELAY_MS,
-                ));
-                append_float_note_window_snapshot(&app_handle, &blur_window, "blur_delayed");
-                if !blur_window.is_visible().unwrap_or(false) {
-                    append_debug_log(
-                        &app_handle,
-                        "float_note_hide_ignored",
-                        Some("source=blur reason=hidden"),
-                    );
-                    return;
-                }
-                if is_float_note_recently_activated(&app_handle) {
-                    append_debug_log(
-                        &app_handle,
-                        "float_note_hide_ignored",
-                        Some("source=blur reason=activation_grace"),
-                    );
-                    return;
-                }
-                if blur_window.is_focused().unwrap_or(false) {
-                    append_debug_log(
-                        &app_handle,
-                        "float_note_hide_ignored",
-                        Some("source=blur reason=refocused"),
-                    );
-                    return;
-                }
-                if is_cursor_inside_window(&app_handle, &blur_window).unwrap_or(false) {
-                    append_debug_log(
-                        &app_handle,
-                        "float_note_hide_ignored",
-                        Some("source=blur reason=cursor_inside"),
-                    );
-                    mark_float_note_activation(&app_handle, "blur_cursor_inside");
-                    let _ = blur_window.set_focus();
-                    activate_float_note_window_native(
-                        &app_handle,
-                        &blur_window,
-                        "blur_cursor_inside",
-                    );
-                    request_float_note_renderer_focus(
-                        &app_handle,
-                        &blur_window,
-                        "blur_cursor_inside",
-                    );
-                    focus_float_note_input(&app_handle, &blur_window, "blur_cursor_inside");
-                    return;
-                }
-                let _ = hide_float_note_window(&app_handle, &blur_window, "blur_outside");
-            });
-        }
-    });
-
-    append_debug_log(app, "float_note_window_create_done", None);
-    Ok(window)
-}
-
-fn focus_float_note_input(app: &AppHandle, window: &WebviewWindow, source: &str) {
-    let script = r#"
-(() => {
-  const input = document.querySelector('.float-note-text-input');
-  if (!input || input.disabled) return false;
-  window.focus();
-  input.focus({ preventScroll: true });
-  const end = input.value.length;
-  input.setSelectionRange(end, end);
-  return document.activeElement === input;
-})()
-"#;
-    match window.eval(script) {
-        Ok(()) => append_debug_log(
-            app,
-            "float_note_eval_focus_input",
-            Some(&format!("source={source} result=ok")),
-        ),
-        Err(error) => append_debug_log(
-            app,
-            "float_note_eval_focus_input",
-            Some(&format!("source={source} result=err error={error}")),
-        ),
-    }
-}
-
-#[cfg(windows)]
-fn activate_float_note_window_native(app: &AppHandle, window: &WebviewWindow, source: &str) {
-    match float_note_focus::activate_window(window) {
-        Ok(report) => {
-            let child_context = match report.child_focus.result {
-                Some(result) => format!(
-                    "source={source} result={result} target_thread={} attached_target={} children={}",
-                    report.child_focus.target_thread.unwrap_or(0),
-                    report.child_focus.attached_target.unwrap_or(false),
-                    report.child_focus.children
-                ),
-                None => format!(
-                    "source={source} result=missing children={}",
-                    report.child_focus.children
-                ),
-            };
-            append_debug_log(app, "float_note_webview_child_focus", Some(&child_context));
-            append_debug_log(
-                app,
-                "float_note_native_activate",
-                Some(&format!(
-                    "source={source} foreground={foreground_result} focus={focus_result} child_focus={child_focus_result} foreground_match={} current_thread={} foreground_thread={} window_thread={} attached_foreground={} attached_window={}",
-                    report.foreground_match,
-                    report.current_thread,
-                    report.foreground_thread,
-                    report.window_thread,
-                    report.attached_foreground,
-                    report.attached_window,
-                    foreground_result = report.foreground_result,
-                    focus_result = report.focus_result,
-                    child_focus_result = report.child_focus_result
-                )),
-            );
-        }
-        Err(error) => append_debug_log(
-            app,
-            "float_note_native_activate",
-            Some(&format!("source={source} result=err error={error}")),
-        ),
-    }
-}
-
-#[cfg(not(windows))]
-fn activate_float_note_window_native(_app: &AppHandle, _window: &WebviewWindow, _source: &str) {}
-
 #[cfg(windows)]
 fn set_window_system_menu_enabled_native(
     window: &WebviewWindow,
@@ -1630,568 +1457,8 @@ fn set_window_system_menu_enabled_native(
     Ok(())
 }
 
-const FLOAT_NOTE_WIDTH: f64 = 724.0;
-const FLOAT_NOTE_MIN_HEIGHT: f64 = 150.0;
-const FLOAT_NOTE_SCREEN_MARGIN: f64 = 24.0;
-const FLOAT_NOTE_BLUR_HIDE_DELAY_MS: u64 = 180;
-const FLOAT_NOTE_ACTIVATION_GRACE_MS: u64 = 700;
-const FLOAT_NOTE_FIRST_FOCUS_RETRY_MS: u64 = 120;
-const FLOAT_NOTE_SECOND_FOCUS_RETRY_GAP_MS: u64 = 200;
-
-fn hide_float_note_window(
-    app: &AppHandle,
-    window: &WebviewWindow,
-    source: &str,
-) -> Result<(), String> {
-    append_debug_log(
-        app,
-        "float_note_hide_start",
-        Some(&format!("source={source}")),
-    );
-    window.hide().map_err(|e| e.to_string())?;
-    append_debug_log(
-        app,
-        "float_note_hide_done",
-        Some(&format!("source={source}")),
-    );
-    Ok(())
-}
-
-fn mark_float_note_activation(app: &AppHandle, source: &str) {
-    let state = app.state::<ShortcutStateStore>();
-    if let Ok(mut last_activation) = state.float_note_last_activation.lock() {
-        *last_activation = Some(Instant::now());
-    }
-    append_debug_log(
-        app,
-        "float_note_activation_marked",
-        Some(&format!("source={source}")),
-    );
-}
-
-fn is_float_note_recently_activated(app: &AppHandle) -> bool {
-    let state = app.state::<ShortcutStateStore>();
-    state
-        .float_note_last_activation
-        .lock()
-        .ok()
-        .and_then(|last_activation| *last_activation)
-        .map(|last| last.elapsed() < Duration::from_millis(FLOAT_NOTE_ACTIVATION_GRACE_MS))
-        .unwrap_or(false)
-}
-
-#[cfg(windows)]
-fn is_float_note_window_active(window: &WebviewWindow) -> bool {
-    if !window.is_visible().unwrap_or(false) {
-        return false;
-    }
-    if window.is_focused().unwrap_or(false) {
-        return true;
-    }
-    float_note_focus::is_window_foreground(window).unwrap_or(false)
-}
-
-#[cfg(not(windows))]
-fn is_float_note_window_active(window: &WebviewWindow) -> bool {
-    window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false)
-}
-
-fn is_cursor_inside_window(app: &AppHandle, window: &WebviewWindow) -> Option<bool> {
-    let cursor = app.cursor_position().ok()?;
-    let position = window.outer_position().ok()?;
-    let size = window.outer_size().ok()?;
-    let left = position.x as f64;
-    let top = position.y as f64;
-    let right = left + size.width as f64;
-    let bottom = top + size.height as f64;
-    Some(cursor.x >= left && cursor.x <= right && cursor.y >= top && cursor.y <= bottom)
-}
-
-fn float_note_window_snapshot(app: &AppHandle, window: &WebviewWindow, source: &str) -> String {
-    let cursor = app
-        .cursor_position()
-        .ok()
-        .map(|point| format!("{},{}", point.x.round(), point.y.round()))
-        .unwrap_or_else(|| "unknown".to_string());
-    let position = window
-        .outer_position()
-        .ok()
-        .map(|point| format!("{},{}", point.x, point.y))
-        .unwrap_or_else(|| "unknown".to_string());
-    let size = window
-        .outer_size()
-        .ok()
-        .map(|size| format!("{}x{}", size.width, size.height))
-        .unwrap_or_else(|| "unknown".to_string());
-    format!(
-        "source={source} visible={} focused={} cursor={} bounds={} size={} cursor_inside={}",
-        window.is_visible().unwrap_or(false),
-        window.is_focused().unwrap_or(false),
-        cursor,
-        position,
-        size,
-        is_cursor_inside_window(app, window)
-            .map(|inside| inside.to_string())
-            .unwrap_or_else(|| "unknown".to_string())
-    )
-}
-
-fn append_float_note_window_snapshot(app: &AppHandle, window: &WebviewWindow, source: &str) {
-    append_debug_log(
-        app,
-        "float_note_window_snapshot",
-        Some(&float_note_window_snapshot(app, window, source)),
-    );
-}
-
-fn request_float_note_renderer_focus(app: &AppHandle, window: &WebviewWindow, source: &str) {
-    let _ = window.emit("float-note-focus-ready", ());
-    append_debug_log(
-        app,
-        "float_note_emit_focus_ready",
-        Some(&format!("source={source}")),
-    );
-}
-
-fn position_float_note_window(
-    app: &AppHandle,
-    window: &WebviewWindow,
-    height: f64,
-    prefer_cursor_monitor: bool,
-    source: &str,
-) {
-    let monitor = if prefer_cursor_monitor {
-        app.cursor_position()
-            .ok()
-            .and_then(|cursor| app.monitor_from_point(cursor.x, cursor.y).ok().flatten())
-            .or_else(|| window.current_monitor().ok().flatten())
-    } else {
-        window.current_monitor().ok().flatten()
-    };
-
-    if let Some(monitor) = monitor {
-        let area = monitor.work_area();
-        let area_pos = area.position;
-        let area_size = area.size;
-        let scale = monitor.scale_factor();
-        let area_x = area_pos.x as f64 / scale;
-        let area_y = area_pos.y as f64 / scale;
-        let area_width = area_size.width as f64 / scale;
-        let area_height = area_size.height as f64 / scale;
-        let next_height = height.max(FLOAT_NOTE_MIN_HEIGHT);
-        let min_x = area_x + FLOAT_NOTE_SCREEN_MARGIN;
-        let max_x = area_x + area_width - FLOAT_NOTE_WIDTH - FLOAT_NOTE_SCREEN_MARGIN;
-        let x =
-            (area_x + (area_width / 2.0) - (FLOAT_NOTE_WIDTH / 2.0)).clamp(min_x, max_x.max(min_x));
-        let center_y = area_y + (area_height / 3.0);
-        let min_y = area_y + FLOAT_NOTE_SCREEN_MARGIN;
-        let max_y = area_y + area_height - next_height - FLOAT_NOTE_SCREEN_MARGIN;
-        let y = (center_y - (next_height / 2.0)).clamp(min_y, max_y.max(min_y));
-        let _ = window.set_position(LogicalPosition::new(x.round(), y.round()));
-        append_debug_log(
-            app,
-            "float_note_positioned",
-            Some(&format!(
-                "source={source} monitor={}x{}@{},{} scale={} x={} y={} height={}",
-                area_size.width,
-                area_size.height,
-                area_pos.x,
-                area_pos.y,
-                scale,
-                x.round(),
-                y.round(),
-                next_height
-            )),
-        );
-        return;
-    }
-
-    if let Some(main) = app.get_webview_window("main") {
-        if let Ok(main_pos) = main.outer_position() {
-            if let Ok(main_size) = main.outer_size() {
-                let next_height = height.max(FLOAT_NOTE_MIN_HEIGHT);
-                let x =
-                    main_pos.x as f64 + (main_size.width as f64 / 2.0) - (FLOAT_NOTE_WIDTH / 2.0);
-                let center_y = main_pos.y as f64 + (main_size.height as f64 / 3.0);
-                let y = center_y - (next_height / 2.0);
-                let _ = window.set_position(LogicalPosition::new(x.round(), y.round()));
-                append_debug_log(
-                    app,
-                    "float_note_positioned",
-                    Some(&format!(
-                        "source={source} fallback=main x={} y={} height={}",
-                        x.round(),
-                        y.round(),
-                        next_height
-                    )),
-                );
-                return;
-            }
-        }
-    }
-
-    let _ = window.center();
-    append_debug_log(
-        app,
-        "float_note_positioned",
-        Some(&format!("source={source} fallback=center")),
-    );
-}
-
-fn keep_float_note_window_inside_current_monitor(
-    app: &AppHandle,
-    window: &WebviewWindow,
-    source: &str,
-) {
-    let Some(monitor) = window.current_monitor().ok().flatten() else {
-        return;
-    };
-    let Ok(position) = window.outer_position() else {
-        return;
-    };
-    let Ok(size) = window.outer_size() else {
-        return;
-    };
-
-    let area = monitor.work_area();
-    let area_pos = area.position;
-    let area_size = area.size;
-    let margin = (FLOAT_NOTE_SCREEN_MARGIN * monitor.scale_factor()).round() as i32;
-    let min_x = area_pos.x + margin;
-    let max_x = area_pos.x + area_size.width as i32 - size.width as i32 - margin;
-    let min_y = area_pos.y + margin;
-    let max_y = area_pos.y + area_size.height as i32 - size.height as i32 - margin;
-    let next_x = position.x.clamp(min_x, max_x.max(min_x));
-    let next_y = position.y.clamp(min_y, max_y.max(min_y));
-
-    if next_x == position.x && next_y == position.y {
-        return;
-    }
-
-    let _ = window.set_position(PhysicalPosition::new(next_x, next_y));
-    append_debug_log(
-        app,
-        "float_note_position_clamped",
-        Some(&format!(
-            "source={source} from={},{} to={},{} size={}x{} monitor={}x{}@{},{}",
-            position.x,
-            position.y,
-            next_x,
-            next_y,
-            size.width,
-            size.height,
-            area_size.width,
-            area_size.height,
-            area_pos.x,
-            area_pos.y
-        )),
-    );
-}
-
-fn show_float_note_window(app: &AppHandle) -> Result<bool, String> {
-    append_debug_log(app, "float_note_show_start", None);
-    let window = ensure_float_note_window(app)?;
-    append_float_note_window_snapshot(app, &window, "show_before");
-    let _ = window.set_size(LogicalSize::new(FLOAT_NOTE_WIDTH, FLOAT_NOTE_MIN_HEIGHT));
-    position_float_note_window(app, &window, FLOAT_NOTE_MIN_HEIGHT, true, "show");
-
-    let _ = window.unminimize();
-    window.show().map_err(|e| e.to_string())?;
-    append_debug_log(app, "float_note_show_done", None);
-    mark_float_note_activation(app, "show");
-    let _ = window.set_always_on_top(true);
-    window.set_focus().map_err(|e| e.to_string())?;
-    append_debug_log(app, "float_note_set_focus_done", Some("source=show"));
-    activate_float_note_window_native(app, &window, "show");
-    append_float_note_window_snapshot(app, &window, "show_after_activate");
-    let _ = window.emit("float-note-shown", ());
-    append_debug_log(app, "float_note_emit_shown", None);
-    request_float_note_renderer_focus(app, &window, "show");
-    focus_float_note_input(app, &window, "show");
-    let app_handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        std::thread::sleep(std::time::Duration::from_millis(
-            FLOAT_NOTE_FIRST_FOCUS_RETRY_MS,
-        ));
-        if let Some(window) = app_handle.get_webview_window("float-note") {
-            append_float_note_window_snapshot(&app_handle, &window, "delayed_120ms_before");
-            if !window.is_visible().unwrap_or(false) {
-                append_debug_log(
-                    &app_handle,
-                    "float_note_delayed_focus_skipped",
-                    Some("source=delayed_120ms reason=hidden"),
-                );
-                return;
-            }
-            if is_float_note_window_active(&window) {
-                append_debug_log(
-                    &app_handle,
-                    "float_note_delayed_focus_skipped",
-                    Some("source=delayed_120ms reason=active"),
-                );
-                return;
-            }
-            mark_float_note_activation(&app_handle, "delayed_120ms");
-            let _ = window.set_focus();
-            append_debug_log(
-                &app_handle,
-                "float_note_set_focus_done",
-                Some("source=delayed_120ms"),
-            );
-            activate_float_note_window_native(&app_handle, &window, "delayed_120ms");
-            request_float_note_renderer_focus(&app_handle, &window, "delayed_120ms");
-            focus_float_note_input(&app_handle, &window, "delayed_120ms");
-            append_float_note_window_snapshot(&app_handle, &window, "delayed_120ms_after");
-        }
-        std::thread::sleep(std::time::Duration::from_millis(
-            FLOAT_NOTE_SECOND_FOCUS_RETRY_GAP_MS,
-        ));
-        if let Some(window) = app_handle.get_webview_window("float-note") {
-            append_float_note_window_snapshot(&app_handle, &window, "delayed_320ms_before");
-            if !window.is_visible().unwrap_or(false) {
-                append_debug_log(
-                    &app_handle,
-                    "float_note_delayed_focus_skipped",
-                    Some("source=delayed_320ms reason=hidden"),
-                );
-                return;
-            }
-            if is_float_note_window_active(&window) {
-                append_debug_log(
-                    &app_handle,
-                    "float_note_delayed_focus_skipped",
-                    Some("source=delayed_320ms reason=active"),
-                );
-                return;
-            }
-            mark_float_note_activation(&app_handle, "delayed_320ms");
-            let _ = window.set_focus();
-            append_debug_log(
-                &app_handle,
-                "float_note_set_focus_done",
-                Some("source=delayed_320ms"),
-            );
-            activate_float_note_window_native(&app_handle, &window, "delayed_320ms");
-            focus_float_note_input(&app_handle, &window, "delayed_320ms");
-            append_float_note_window_snapshot(&app_handle, &window, "delayed_320ms_after");
-        }
-    });
-    Ok(true)
-}
-
-fn toggle_float_note_window(app: &AppHandle) -> Result<bool, String> {
-    if let Some(window) = app.get_webview_window("float-note") {
-        append_float_note_window_snapshot(app, &window, "toggle");
-        if is_float_note_window_active(&window) {
-            hide_float_note_window(app, &window, "toggle")?;
-            return Ok(true);
-        }
-    }
-    show_float_note_window(app)
-}
-
-fn handle_float_note_shortcut(app: &AppHandle, event: ShortcutState) {
-    append_debug_log(
-        app,
-        "float_note_shortcut_event",
-        Some(&format!("state={event:?}")),
-    );
-    let shortcut_state = app.state::<ShortcutStateStore>();
-
-    if event == ShortcutState::Released {
-        if let Ok(mut is_pressed) = shortcut_state.float_note_is_pressed.lock() {
-            *is_pressed = false;
-        }
-        return;
-    }
-
-    if event != ShortcutState::Pressed {
-        return;
-    }
-
-    if let Ok(mut is_pressed) = shortcut_state.float_note_is_pressed.lock() {
-        *is_pressed = true;
-    }
-
-    if let Ok(mut last_press) = shortcut_state.float_note_last_press.lock() {
-        let now = Instant::now();
-        if last_press
-            .map(|last| now.duration_since(last) < Duration::from_millis(220))
-            .unwrap_or(false)
-        {
-            append_debug_log(app, "float_note_shortcut_ignored", Some("reason=debounce"));
-            return;
-        }
-        *last_press = Some(now);
-    }
-
-    if let Some(window) = app.get_webview_window("float-note") {
-        append_float_note_window_snapshot(app, &window, "shortcut_pressed");
-        if is_float_note_window_active(&window) {
-            let _ = hide_float_note_window(app, &window, "shortcut");
-            return;
-        }
-    }
-
-    let app_handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let _ = show_float_note_window(&app_handle);
-    });
-}
-
-fn normalize_shortcut(shortcut: &str) -> String {
-    shortcut
-        .trim()
-        .split('+')
-        .filter_map(|part| {
-            let trimmed = part.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(match trimmed.to_ascii_lowercase().as_str() {
-                    "cmdorctrl" | "cmdorcontrol" | "commandorctrl" | "commandorcontrol" => {
-                        "CommandOrControl".to_string()
-                    }
-                    "ctrl" | "control" => "Control".to_string(),
-                    "cmd" | "command" | "super" => "Super".to_string(),
-                    "alt" | "option" => "Alt".to_string(),
-                    "shift" => "Shift".to_string(),
-                    "esc" | "escape" => "Escape".to_string(),
-                    "up" => "ArrowUp".to_string(),
-                    "down" => "ArrowDown".to_string(),
-                    "left" => "ArrowLeft".to_string(),
-                    "right" => "ArrowRight".to_string(),
-                    "space" => "Space".to_string(),
-                    "tab" => "Tab".to_string(),
-                    "enter" | "return" => "Enter".to_string(),
-                    "delete" | "del" => "Delete".to_string(),
-                    "backspace" => "Backspace".to_string(),
-                    _ => trimmed.to_string(),
-                })
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("+")
-}
-
-fn register_float_note_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String> {
-    app.global_shortcut()
-        .on_shortcut(shortcut, |app, _shortcut, event| {
-            handle_float_note_shortcut(app, event.state());
-        })
-        .map_err(|err| {
-            append_global_log("shortcut", "register_failed", Some(&err.to_string()));
-            err.to_string()
-        })
-}
-
-fn miniapp_window_label(view_key: &str) -> String {
-    let sanitized = view_key
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string();
-
-    if sanitized.is_empty() {
-        "miniapp-window".to_string()
-    } else {
-        format!("miniapp-{sanitized}")
-    }
-}
-
-fn clamp_view_bounds(bounds: ViewBounds) -> ViewBounds {
-    const MAIN_CHROME_HEIGHT: f64 = 40.0;
-    let x = bounds.x.max(0.0);
-    let top = bounds.y.max(MAIN_CHROME_HEIGHT);
-    let overflow = (MAIN_CHROME_HEIGHT - bounds.y).max(0.0);
-
-    ViewBounds {
-        x,
-        y: top,
-        width: bounds.width.max(1.0),
-        height: (bounds.height - overflow).max(1.0),
-    }
-}
-
-fn format_view_bounds(bounds: ViewBounds) -> String {
-    format!(
-        "x={:.0} y={:.0} width={:.0} height={:.0}",
-        bounds.x, bounds.y, bounds.width, bounds.height
-    )
-}
-
 fn is_external_web_url(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https")
-}
-
-fn text_has_auth_marker(value: &str) -> bool {
-    let lower = value.to_ascii_lowercase();
-    [
-        "auth",
-        "login",
-        "signin",
-        "sign-in",
-        "oauth",
-        "authorize",
-        "sso",
-        "account",
-        "session",
-        "callback",
-        "identity",
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker))
-}
-
-fn host_matches_suffix(host: &str, suffix: &str) -> bool {
-    host == suffix || host.ends_with(&format!(".{suffix}"))
-}
-
-fn is_known_auth_provider_host(host: &str) -> bool {
-    [
-        "auth.openai.com",
-        "accounts.google.com",
-        "login.microsoftonline.com",
-        "login.live.com",
-        "appleid.apple.com",
-        "github.com",
-        "auth0.com",
-        "okta.com",
-    ]
-    .iter()
-    .any(|suffix| host_matches_suffix(host, suffix))
-}
-
-fn is_miniapp_auth_navigation(base_url: &Url, target_url: &Url) -> bool {
-    let Some(target_host) = target_url.host_str().map(|host| host.to_ascii_lowercase()) else {
-        return false;
-    };
-    let base_host = base_url.host_str().unwrap_or_default().to_ascii_lowercase();
-
-    is_known_auth_provider_host(&target_host)
-        || text_has_auth_marker(&target_host)
-        || text_has_auth_marker(target_url.path())
-        || (!base_host.is_empty()
-            && text_has_auth_marker(&base_host)
-            && host_matches_suffix(&target_host, base_host.trim_start_matches("auth.")))
-}
-
-fn should_keep_miniapp_navigation_inside(base_url: &Url, target_url: &Url) -> bool {
-    if !is_external_web_url(target_url) {
-        return true;
-    }
-
-    (base_url.scheme() == target_url.scheme()
-        && base_url.host_str() == target_url.host_str()
-        && base_url.port_or_known_default() == target_url.port_or_known_default())
-        || is_miniapp_auth_navigation(base_url, target_url)
 }
 
 #[tauri::command]
@@ -2234,158 +1501,14 @@ fn open_external_web_url(url: &Url) -> Result<bool, String> {
     }
 }
 
-fn resolve_fallback_log_file() -> PathBuf {
-    env::temp_dir().join("onemind-tauri.log")
-}
-
-fn append_global_log(level: &str, message: &str, context: Option<&str>) {
-    let fallback = resolve_fallback_log_file();
-    append_line(&fallback, level, message, context);
-}
-
-fn is_debug_mode_enabled() -> bool {
-    cfg!(debug_assertions)
-        || matches!(
-            env::var("ONEMIND_TAURI_DEBUG").as_deref(),
-            Ok("1") | Ok("true") | Ok("TRUE") | Ok("yes") | Ok("YES")
-        )
-}
-
-fn debug_mode_source() -> String {
-    if cfg!(debug_assertions) {
-        "debug-build".to_string()
-    } else if is_debug_mode_enabled() {
-        "ONEMIND_TAURI_DEBUG".to_string()
-    } else {
-        "disabled".to_string()
-    }
-}
-
-fn append_debug_log(app: &AppHandle, message: &str, context: Option<&str>) {
-    if !is_debug_mode_enabled() {
-        return;
-    }
-
-    let fallback = resolve_fallback_log_file();
-    append_line(&fallback, "debug", message, context);
-
-    if let Ok(file_path) = resolve_log_file(app) {
-        append_line(&file_path, "debug", message, context);
-    }
-}
-
-fn append_line(file_path: &PathBuf, level: &str, message: &str, context: Option<&str>) {
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(file_path) {
-        let entry = serde_json::json!({
-            "timestamp": now_iso_like(),
-            "level": level,
-            "message": message,
-            "context": context,
-        });
-        let _ = writeln!(file, "{entry}");
-        let _ = file.flush();
-    }
-}
-
-fn append_boot_log_line(app: &AppHandle, message: &str) {
-    let fallback = resolve_fallback_log_file();
-    append_line(&fallback, "boot", message, None);
-
-    if let Ok(file_path) = resolve_log_file(app) {
-        append_line(&file_path, "boot", message, None);
-    }
-}
-
-fn append_boot_log_line_with_context(app: &AppHandle, message: &str, context: &str) {
-    let fallback = resolve_fallback_log_file();
-    append_line(&fallback, "boot", message, Some(context));
-
-    if let Ok(file_path) = resolve_log_file(app) {
-        append_line(&file_path, "boot", message, Some(context));
-    }
-}
-
-fn resolve_diagnostics_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let base = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
-    let dir = base.join("diagnostics");
-    fs::create_dir_all(&dir).map_err(|e| format!("failed to create probe dir: {e}"))?;
-    Ok(dir)
-}
-
-fn resolve_log_file(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(resolve_diagnostics_dir(app)?.join("shell-log.jsonl"))
-}
-
-#[tauri::command]
-fn get_shell_report(app: AppHandle) -> Result<ShellReport, String> {
-    let log_file = resolve_log_file(&app)?;
-    let data_dir = resolve_diagnostics_dir(&app)?;
-
-    Ok(ShellReport {
-        app_name: app.package_info().name.clone(),
-        app_version: app.package_info().version.to_string(),
-        runtime_target: "tauri".to_string(),
-        platform: env::consts::OS.to_string(),
-        arch: env::consts::ARCH.to_string(),
-        dev: cfg!(debug_assertions),
-        log_file: log_file.display().to_string(),
-        data_dir: data_dir.display().to_string(),
-        generated_at: now_iso_like(),
-    })
-}
-
-#[tauri::command]
-fn write_shell_log(
-    app: AppHandle,
-    level: String,
-    message: String,
-    context: Option<String>,
-) -> Result<(), String> {
-    let fallback = resolve_fallback_log_file();
-    append_line(&fallback, &level, &message, context.as_deref());
-
-    let file_path = resolve_log_file(&app)?;
-    append_line(&file_path, &level, &message, context.as_deref());
-    Ok(())
-}
-
-#[tauri::command]
-fn diagnostics_get_debug_mode() -> DebugModeReport {
-    DebugModeReport {
-        enabled: is_debug_mode_enabled(),
-        source: debug_mode_source(),
-    }
-}
-
-#[tauri::command]
-fn diagnostics_open_devtools(app: AppHandle, label: Option<String>) -> Result<bool, String> {
-    let window_label = label.unwrap_or_else(|| "float-note".to_string());
-    let window = app
-        .get_webview_window(&window_label)
-        .ok_or_else(|| format!("window not found: {window_label}"))?;
-    window.open_devtools();
-    append_debug_log(
-        &app,
-        "diagnostics_open_devtools",
-        Some(&format!("label={window_label}")),
-    );
-    Ok(true)
-}
-
-#[tauri::command]
 fn workspace_get_default_path() -> Result<String, String> {
     Ok(path_to_string(&get_default_workspace_path()?))
 }
 
-#[tauri::command]
 fn workspace_init_default() -> Result<WorkspaceMeta, String> {
     ensure_workspace_structure(get_default_workspace_path()?)
 }
 
-#[tauri::command]
 fn workspace_select(window: WebviewWindow) -> Result<Option<WorkspaceMeta>, String> {
     let selected = window
         .dialog()
@@ -2404,14 +1527,12 @@ fn workspace_select(window: WebviewWindow) -> Result<Option<WorkspaceMeta>, Stri
     }
 }
 
-#[tauri::command]
 fn notes_list(workspace_path: String) -> Result<Vec<NoteTreeNode>, String> {
     let notes_path = Path::new(&workspace_path).join("notes");
     fs::create_dir_all(&notes_path).map_err(|e| e.to_string())?;
     read_note_tree(&notes_path, &notes_path, true)
 }
 
-#[tauri::command]
 fn notes_list_directories(workspace_path: String) -> Result<Vec<String>, String> {
     let notes_path = Path::new(&workspace_path).join("notes");
     fs::create_dir_all(&notes_path).map_err(|e| e.to_string())?;
@@ -2421,18 +1542,15 @@ fn notes_list_directories(workspace_path: String) -> Result<Vec<String>, String>
     Ok(directories)
 }
 
-#[tauri::command]
 fn notes_read(file_path: String) -> Result<String, String> {
     fs::read_to_string(file_path).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
 fn notes_write(file_path: String, content: String) -> Result<bool, String> {
     fs::write(file_path, content).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
-#[tauri::command]
 fn notes_create_file(
     workspace_path: String,
     relative_dir: String,
@@ -2462,7 +1580,6 @@ fn notes_create_file(
     Ok(path_to_string(&file_path))
 }
 
-#[tauri::command]
 fn notes_create_from_quick_note(
     workspace_path: String,
     relative_dir: String,
@@ -2493,7 +1610,6 @@ fn notes_create_from_quick_note(
     Ok(path_to_string(&file_path))
 }
 
-#[tauri::command]
 fn notes_create_folder(
     workspace_path: String,
     relative_dir: String,
@@ -2507,7 +1623,6 @@ fn notes_create_folder(
     Ok(path_to_string(&target_dir))
 }
 
-#[tauri::command]
 fn notes_rename(old_path: String, new_name: String) -> Result<String, String> {
     let old_path_buf = PathBuf::from(old_path);
     let parent = old_path_buf
@@ -2755,7 +1870,6 @@ fn attachment_is_referenced(attachment: &Path, notes_root: &Path) -> bool {
     })
 }
 
-#[tauri::command]
 fn notes_save_pasted_image(
     workspace_path: String,
     note_path: String,
@@ -2823,7 +1937,6 @@ fn notes_save_pasted_image(
     })
 }
 
-#[tauri::command]
 fn notes_resolve_image(
     workspace_path: String,
     note_path: String,
@@ -2889,7 +2002,6 @@ fn validate_image_base_name(value: &str) -> Result<&str, String> {
     Ok(name)
 }
 
-#[tauri::command]
 fn notes_rename_image(
     workspace_path: String,
     note_path: String,
@@ -2961,7 +2073,6 @@ fn notes_rename_image(
     Ok(format!("./assets/{bucket}/{target_file_name}"))
 }
 
-#[tauri::command]
 fn notes_move(
     old_path: String,
     workspace_path: String,
@@ -3247,7 +2358,6 @@ mod note_asset_tests {
     }
 }
 
-#[tauri::command]
 fn notes_delete(target_path: String) -> Result<bool, String> {
     let path = PathBuf::from(target_path);
     let is_managed_root = path.parent().is_some_and(|parent| {
@@ -3269,7 +2379,6 @@ fn notes_delete(target_path: String) -> Result<bool, String> {
     Ok(true)
 }
 
-#[tauri::command]
 fn notes_open_file(target_path: String, workspace_path: Option<String>) -> Result<bool, String> {
     let target = PathBuf::from(target_path);
     validate_workspace_content_path(&target, workspace_path.as_deref())?;
@@ -3277,7 +2386,6 @@ fn notes_open_file(target_path: String, workspace_path: Option<String>) -> Resul
     Ok(true)
 }
 
-#[tauri::command]
 fn notes_open_containing_folder(
     target_path: String,
     workspace_path: Option<String>,
@@ -3297,7 +2405,6 @@ fn notes_open_containing_folder(
     Ok(true)
 }
 
-#[tauri::command]
 fn files_read_data_url(
     target_path: String,
     workspace_path: Option<String>,
@@ -3385,12 +2492,10 @@ fn open_path_in_system(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
 fn quick_notes_list(workspace_path: String) -> Result<Vec<QuickNote>, String> {
     read_quick_notes_file(&workspace_path)
 }
 
-#[tauri::command]
 fn quick_notes_create(workspace_path: String, content: String) -> Result<QuickNote, String> {
     let next_content = content.trim();
     if next_content.is_empty() {
@@ -3413,7 +2518,6 @@ fn quick_notes_create(workspace_path: String, content: String) -> Result<QuickNo
     Ok(item)
 }
 
-#[tauri::command]
 fn quick_notes_delete(workspace_path: String, id: String) -> Result<bool, String> {
     let file_path = get_quick_notes_file(&workspace_path)?;
     let notes = read_quick_notes_file(&workspace_path)?;
@@ -3432,12 +2536,10 @@ fn quick_notes_delete(workspace_path: String, id: String) -> Result<bool, String
     Ok(true)
 }
 
-#[tauri::command]
 fn preferences_read(workspace_path: String) -> Result<AppPreferences, String> {
     read_preferences_file(&workspace_path)
 }
 
-#[tauri::command]
 fn preferences_write(
     workspace_path: String,
     preferences: AppPreferences,
@@ -3451,7 +2553,6 @@ fn preferences_write(
     Ok(preferences)
 }
 
-#[tauri::command]
 fn activity_append(
     workspace_path: String,
     events: Vec<ActivityEventInput>,
@@ -3465,7 +2566,6 @@ fn activity_append(
     append_activity_events_file(&workspace_path, normalized)
 }
 
-#[tauri::command]
 fn activity_report(
     workspace_path: String,
     start_date: String,
@@ -3474,12 +2574,10 @@ fn activity_report(
     build_activity_report(&workspace_path, &start_date, &end_date)
 }
 
-#[tauri::command]
 fn miniapps_list(workspace_path: String) -> Result<Vec<MiniappSource>, String> {
     read_miniapps_file(&workspace_path)
 }
 
-#[tauri::command]
 fn miniapps_create(workspace_path: String, input: MiniappInput) -> Result<MiniappSource, String> {
     let file_path = get_miniapps_file(&workspace_path)?;
     let mut miniapps = read_miniapps_file(&workspace_path)?;
@@ -3499,7 +2597,6 @@ fn miniapps_create(workspace_path: String, input: MiniappInput) -> Result<Miniap
     Ok(item)
 }
 
-#[tauri::command]
 fn miniapps_update(
     workspace_path: String,
     id: String,
@@ -3525,7 +2622,6 @@ fn miniapps_update(
     Ok(updated)
 }
 
-#[tauri::command]
 fn miniapps_delete(workspace_path: String, id: String) -> Result<bool, String> {
     let file_path = get_miniapps_file(&workspace_path)?;
     let miniapps = read_miniapps_file(&workspace_path)?
@@ -3599,130 +2695,6 @@ fn window_set_system_menu_enabled(app: AppHandle, enabled: bool) -> Result<bool,
 }
 
 #[tauri::command]
-fn float_note_show(app: AppHandle) -> Result<bool, String> {
-    show_float_note_window(&app)
-}
-
-#[tauri::command]
-fn float_note_toggle(app: AppHandle) -> Result<bool, String> {
-    toggle_float_note_window(&app)
-}
-
-#[tauri::command]
-fn float_note_hide(app: AppHandle) -> Result<bool, String> {
-    if let Some(window) = app.get_webview_window("float-note") {
-        hide_float_note_window(&app, &window, "command")?;
-    }
-    Ok(true)
-}
-
-#[tauri::command]
-fn float_note_focus(app: AppHandle) -> Result<bool, String> {
-    if let Some(window) = app.get_webview_window("float-note") {
-        append_float_note_window_snapshot(&app, &window, "command_focus_before");
-        if !window.is_visible().unwrap_or(false) {
-            append_debug_log(&app, "float_note_focus_skipped", Some("reason=hidden"));
-            return Ok(false);
-        }
-        let _ = window.set_always_on_top(true);
-        mark_float_note_activation(&app, "command_focus");
-        window.set_focus().map_err(|e| e.to_string())?;
-        activate_float_note_window_native(&app, &window, "command_focus");
-        append_float_note_window_snapshot(&app, &window, "command_focus_after");
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-#[tauri::command]
-fn float_note_set_height(app: AppHandle, height: u32) -> Result<bool, String> {
-    let window = ensure_float_note_window(&app)?;
-    let next_height = height.clamp(150, 560);
-    window
-        .set_size(LogicalSize::new(FLOAT_NOTE_WIDTH, next_height as f64))
-        .map_err(|e| e.to_string())?;
-    keep_float_note_window_inside_current_monitor(&app, &window, "set_height");
-    Ok(true)
-}
-
-#[tauri::command]
-fn float_note_open_route(app: AppHandle, route: String) -> Result<bool, String> {
-    if let Some(main) = app.get_webview_window("main") {
-        main.emit("app-navigate", route)
-            .map_err(|e| e.to_string())?;
-        main.show().map_err(|e| e.to_string())?;
-        main.set_focus().map_err(|e| e.to_string())?;
-        Ok(true)
-    } else {
-        Ok(false)
-    }
-}
-
-#[tauri::command]
-fn float_note_register_shortcut(app: AppHandle, shortcut: String) -> Result<bool, String> {
-    let next_shortcut = if shortcut.trim().is_empty() {
-        "Alt+Space".to_string()
-    } else {
-        normalize_shortcut(&shortcut)
-    };
-    let state = app.state::<ShortcutStateStore>();
-    let mut active_shortcut = state
-        .float_note_shortcut
-        .lock()
-        .map_err(|_| "failed to lock shortcut state".to_string())?;
-
-    if let Some(current) = active_shortcut.take() {
-        let _ = app.global_shortcut().unregister(current.as_str());
-    }
-    let mut suspended_shortcut = state
-        .float_note_suspended_shortcut
-        .lock()
-        .map_err(|_| "failed to lock suspended shortcut state".to_string())?;
-    if let Some(current) = suspended_shortcut.take() {
-        let _ = app.global_shortcut().unregister(current.as_str());
-    }
-
-    match register_float_note_shortcut(&app, next_shortcut.as_str()) {
-        Ok(()) => {
-            *active_shortcut = Some(next_shortcut);
-            Ok(true)
-        }
-        Err(_) => Ok(false),
-    }
-}
-
-#[tauri::command]
-fn float_note_set_shortcut_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
-    let state = app.state::<ShortcutStateStore>();
-    let mut active_shortcut = state
-        .float_note_shortcut
-        .lock()
-        .map_err(|_| "failed to lock shortcut state".to_string())?;
-    let mut suspended_shortcut = state
-        .float_note_suspended_shortcut
-        .lock()
-        .map_err(|_| "failed to lock suspended shortcut state".to_string())?;
-
-    if enabled {
-        if active_shortcut.is_some() {
-            return Ok(true);
-        }
-        let Some(shortcut) = suspended_shortcut.take() else {
-            return Ok(true);
-        };
-        register_float_note_shortcut(&app, shortcut.as_str())?;
-        *active_shortcut = Some(shortcut);
-        return Ok(true);
-    }
-
-    if let Some(shortcut) = active_shortcut.take() {
-        let _ = app.global_shortcut().unregister(shortcut.as_str());
-        *suspended_shortcut = Some(shortcut);
-    }
-    Ok(true)
-}
-
-#[tauri::command]
 async fn system_apps_search(
     app: AppHandle,
     workspace_path: String,
@@ -3750,285 +2722,23 @@ async fn system_apps_search(
 }
 
 #[tauri::command]
-fn system_apps_open(
+async fn system_apps_open(
     app: AppHandle,
     workspace_path: String,
     app_entry: SystemAppEntry,
 ) -> Result<bool, String> {
-    append_debug_log(
-        &app,
-        "system_apps_open",
-        Some(&format!(
-            "workspace={} name={} path={}",
-            workspace_path, app_entry.name, app_entry.path
-        )),
-    );
-    let opened = open_system_app_path(&app_entry.path)?;
-    if opened {
-        let _ = record_system_app_recent(&workspace_path, &app_entry);
-        if let Some(window) = app.get_webview_window("float-note") {
-            let _ = hide_float_note_window(&app, &window, "system_app_open");
+    let opened = runtime::run_blocking("system_apps_open", move || {
+        let opened = open_system_app_path(&app_entry.path)?;
+        if opened {
+            let _ = record_system_app_recent(&workspace_path, &app_entry);
         }
+        Ok(opened)
+    })
+    .await?;
+    if opened {
+        let _ = float_note::float_note_hide(app).await;
     }
     Ok(opened)
-}
-
-#[tauri::command]
-async fn miniapp_view_show(
-    app: AppHandle,
-    view_key: String,
-    url: String,
-    partition: String,
-    bounds: ViewBounds,
-) -> Result<bool, String> {
-    let label = miniapp_window_label(&view_key);
-    let raw_bounds = bounds;
-    let bounds = clamp_view_bounds(raw_bounds);
-    append_debug_log(
-        &app,
-        "miniapp_view_show",
-        Some(&format!(
-            "label={} view_key={} raw=({}) clamped=({}) url={}",
-            label,
-            view_key,
-            format_view_bounds(raw_bounds),
-            format_view_bounds(bounds),
-            url
-        )),
-    );
-    if let Some(webview) = app.get_webview(&label) {
-        append_debug_log(
-            &app,
-            "miniapp_view_show_reuse",
-            Some(&format!(
-                "label={} clamped=({})",
-                label,
-                format_view_bounds(bounds)
-            )),
-        );
-        webview
-            .set_position(LogicalPosition::new(bounds.x, bounds.y))
-            .map_err(|e| e.to_string())?;
-        webview
-            .set_size(LogicalSize::new(bounds.width, bounds.height))
-            .map_err(|e| e.to_string())?;
-        webview.show().map_err(|e| e.to_string())?;
-        return Ok(true);
-    }
-
-    let main = app
-        .get_window("main")
-        .ok_or_else(|| "main window is not available".to_string())?;
-    let external_url: Url = url
-        .parse()
-        .map_err(|e| format!("invalid miniapp url: {e}"))?;
-    let base_url = external_url.clone();
-    let navigation_app = app.clone();
-    let navigation_label = label.clone();
-    let new_window_app = app.clone();
-    let new_window_label = label.clone();
-    let new_window_base_url = base_url.clone();
-    let builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(external_url))
-        .data_directory(
-            app.path()
-                .app_data_dir()
-                .map_err(|e| e.to_string())?
-                .join("miniapp-profiles")
-                .join(safe_storage_key(&partition)),
-        )
-        .on_navigation(move |target_url| {
-            if should_keep_miniapp_navigation_inside(&base_url, target_url) {
-                return true;
-            }
-
-            append_debug_log(
-                &navigation_app,
-                "miniapp_external_navigation",
-                Some(&format!("label={} url={}", navigation_label, target_url)),
-            );
-            if let Err(error) = open_external_web_url(target_url) {
-                append_debug_log(
-                    &navigation_app,
-                    "miniapp_external_navigation_failed",
-                    Some(&format!(
-                        "label={} url={} error={}",
-                        navigation_label, target_url, error
-                    )),
-                );
-            }
-            false
-        })
-        .on_new_window(move |target_url, _features| {
-            if should_keep_miniapp_navigation_inside(&new_window_base_url, &target_url) {
-                if let Some(webview) = new_window_app.get_webview(&new_window_label) {
-                    append_debug_log(
-                        &new_window_app,
-                        "miniapp_internal_new_window_navigation",
-                        Some(&format!("label={} url={}", new_window_label, target_url)),
-                    );
-                    if let Err(error) = webview.navigate(target_url) {
-                        append_debug_log(
-                            &new_window_app,
-                            "miniapp_internal_new_window_navigation_failed",
-                            Some(&format!("label={} error={}", new_window_label, error)),
-                        );
-                    }
-                }
-                return NewWindowResponse::Deny;
-            }
-
-            append_debug_log(
-                &new_window_app,
-                "miniapp_external_new_window",
-                Some(&format!("label={} url={}", new_window_label, target_url)),
-            );
-            if let Err(error) = open_external_web_url(&target_url) {
-                append_debug_log(
-                    &new_window_app,
-                    "miniapp_external_new_window_failed",
-                    Some(&format!(
-                        "label={} url={} error={}",
-                        new_window_label, target_url, error
-                    )),
-                );
-            }
-            NewWindowResponse::Deny
-        });
-    let webview = main
-        .add_child(
-            builder,
-            LogicalPosition::new(bounds.x, bounds.y),
-            LogicalSize::new(bounds.width, bounds.height),
-        )
-        .map_err(|e| format!("failed to create miniapp view: {e}"))?;
-    webview.show().map_err(|e| e.to_string())?;
-    append_debug_log(
-        &app,
-        "miniapp_view_show_created",
-        Some(&format!(
-            "label={} clamped=({})",
-            label,
-            format_view_bounds(bounds)
-        )),
-    );
-    Ok(true)
-}
-
-#[tauri::command]
-fn miniapp_view_set_bounds(
-    app: AppHandle,
-    view_key: String,
-    bounds: ViewBounds,
-) -> Result<bool, String> {
-    let label = miniapp_window_label(&view_key);
-    let raw_bounds = bounds;
-    let bounds = clamp_view_bounds(raw_bounds);
-    append_debug_log(
-        &app,
-        "miniapp_view_set_bounds",
-        Some(&format!(
-            "label={} view_key={} raw=({}) clamped=({})",
-            label,
-            view_key,
-            format_view_bounds(raw_bounds),
-            format_view_bounds(bounds)
-        )),
-    );
-    if let Some(webview) = app.get_webview(&label) {
-        webview
-            .set_position(LogicalPosition::new(bounds.x, bounds.y))
-            .map_err(|e| e.to_string())?;
-        webview
-            .set_size(LogicalSize::new(bounds.width, bounds.height))
-            .map_err(|e| e.to_string())?;
-    } else {
-        append_debug_log(
-            &app,
-            "miniapp_view_set_bounds_missing",
-            Some(&format!("label={} view_key={}", label, view_key)),
-        );
-    }
-    Ok(true)
-}
-
-#[tauri::command]
-fn miniapp_view_hide(app: AppHandle, view_key: Option<String>) -> Result<bool, String> {
-    if let Some(view_key) = view_key {
-        let label = miniapp_window_label(&view_key);
-        append_debug_log(
-            &app,
-            "miniapp_view_hide_one",
-            Some(&format!("label={} view_key={}", label, view_key)),
-        );
-        if let Some(webview) = app.get_webview(&label) {
-            webview.hide().map_err(|e| e.to_string())?;
-        } else {
-            append_debug_log(
-                &app,
-                "miniapp_view_hide_one_missing",
-                Some(&format!("label={} view_key={}", label, view_key)),
-            );
-        }
-        return Ok(true);
-    }
-
-    let mut hidden_count = 0usize;
-    let mut failed_count = 0usize;
-    for (label, webview) in app.webviews() {
-        if label.starts_with("miniapp-") {
-            match webview.hide() {
-                Ok(()) => {
-                    hidden_count += 1;
-                    append_debug_log(
-                        &app,
-                        "miniapp_view_hide_all_one",
-                        Some(&format!("label={}", label)),
-                    );
-                }
-                Err(error) => {
-                    failed_count += 1;
-                    append_debug_log(
-                        &app,
-                        "miniapp_view_hide_all_one_failed",
-                        Some(&format!("label={} error={}", label, error)),
-                    );
-                }
-            }
-        }
-    }
-    append_debug_log(
-        &app,
-        "miniapp_view_hide_all_done",
-        Some(&format!(
-            "hidden_count={} failed_count={}",
-            hidden_count, failed_count
-        )),
-    );
-    Ok(true)
-}
-
-#[tauri::command]
-fn miniapp_view_reload(app: AppHandle, view_key: String, url: String) -> Result<bool, String> {
-    let label = miniapp_window_label(&view_key);
-    if let Some(webview) = app.get_webview(&label) {
-        let parsed_url = url
-            .parse()
-            .map_err(|e| format!("invalid miniapp url: {e}"))?;
-        webview
-            .navigate(parsed_url)
-            .map_err(|e| format!("failed to reload miniapp window: {e}"))?;
-        return Ok(true);
-    }
-    Ok(false)
-}
-
-#[tauri::command]
-fn miniapp_view_close(app: AppHandle, view_key: String) -> Result<bool, String> {
-    let label = miniapp_window_label(&view_key);
-    if let Some(webview) = app.get_webview(&label) {
-        webview.close().map_err(|e| e.to_string())?;
-    }
-    Ok(true)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -4043,27 +2753,22 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(ShortcutStateStore::default())
+        .manage(float_note::FloatNoteState::default())
         .manage(SystemAppStore::default())
+        .manage(miniapp::MiniappState::default())
+        .manage(watchdog::WatchdogState::default())
         .manage(sync::SyncState::default())
         .manage(mermaid_preview::PreviewStore::default())
         .setup(|app| {
             append_boot_log_line(app.handle(), "tauri_setup_entered");
+            watchdog::start(app.handle().clone());
             if let Some(main_window) = app.get_webview_window("main") {
                 append_boot_log_line(app.handle(), "main_window_exists_from_config");
                 let app_handle = app.handle().clone();
                 main_window.on_window_event(move |event| {
                     if matches!(event, WindowEvent::CloseRequested { .. }) {
-                        for (label, window) in app_handle.webview_windows() {
-                            if label != "main" {
-                                let _ = window.close();
-                            }
-                        }
-                        for (label, webview) in app_handle.webviews() {
-                            if label != "main" {
-                                let _ = webview.close();
-                            }
-                        }
+                        // Do not synchronously close WebViews inside a window callback.
+                        // Tauri tears down all owned windows when the event loop exits.
                         app_handle.exit(0);
                     }
                 });
@@ -4073,11 +2778,13 @@ pub fn run() {
             let default_shortcut = get_default_workspace_path()
                 .ok()
                 .and_then(|path| read_preferences_file(&path_to_string(&path)).ok())
-                .map(|preferences| normalize_shortcut(&preferences.float_note_shortcut))
-                .unwrap_or_else(|| normalize_shortcut(&default_preferences().float_note_shortcut));
-            match register_float_note_shortcut(app.handle(), &default_shortcut) {
+                .map(|preferences| float_note::normalize_shortcut(&preferences.float_note_shortcut))
+                .unwrap_or_else(|| {
+                    float_note::normalize_shortcut(&default_preferences().float_note_shortcut)
+                });
+            match float_note::register_float_note_shortcut(app.handle(), &default_shortcut) {
                 Ok(()) => {
-                    let state = app.state::<ShortcutStateStore>();
+                    let state = app.state::<float_note::FloatNoteState>();
                     if let Ok(mut active_shortcut) = state.float_note_shortcut.lock() {
                         *active_shortcut = Some(default_shortcut.clone());
                     }
@@ -4107,10 +2814,10 @@ pub fn run() {
             mermaid_preview::mermaid_preview_read,
             mermaid_preview::mermaid_preview_fullscreen,
             mermaid_preview::mermaid_preview_close,
-            get_shell_report,
-            write_shell_log,
-            diagnostics_get_debug_mode,
-            diagnostics_open_devtools,
+            diagnostics::get_shell_report,
+            diagnostics::write_shell_log,
+            diagnostics::diagnostics_get_debug_mode,
+            diagnostics::diagnostics_open_devtools,
             sync::sync_read_config,
             sync::sync_write_config,
             sync::sync_get_status,
@@ -4125,56 +2832,56 @@ pub fn run() {
             sync::sync_resolve_conflicts,
             sync::sync_continue_rebase,
             sync::sync_abort_rebase,
-            workspace_get_default_path,
-            workspace_select,
-            workspace_init_default,
-            notes_list,
-            notes_list_directories,
-            notes_read,
-            notes_write,
-            notes_create_file,
-            notes_create_from_quick_note,
-            notes_create_folder,
-            notes_rename,
-            notes_save_pasted_image,
-            notes_resolve_image,
-            notes_rename_image,
-            notes_move,
-            notes_delete,
-            notes_open_file,
-            notes_open_containing_folder,
-            files_read_data_url,
-            quick_notes_list,
-            quick_notes_create,
-            quick_notes_delete,
-            preferences_read,
-            preferences_write,
-            activity_append,
-            activity_report,
-            miniapps_list,
-            miniapps_create,
-            miniapps_update,
-            miniapps_delete,
+            storage_commands::workspace_get_default_path,
+            storage_commands::workspace_select,
+            storage_commands::workspace_init_default,
+            storage_commands::notes_list,
+            storage_commands::notes_list_directories,
+            storage_commands::notes_read,
+            storage_commands::notes_write,
+            storage_commands::notes_create_file,
+            storage_commands::notes_create_from_quick_note,
+            storage_commands::notes_create_folder,
+            storage_commands::notes_rename,
+            storage_commands::notes_save_pasted_image,
+            storage_commands::notes_resolve_image,
+            storage_commands::notes_rename_image,
+            storage_commands::notes_move,
+            storage_commands::notes_delete,
+            storage_commands::notes_open_file,
+            storage_commands::notes_open_containing_folder,
+            storage_commands::files_read_data_url,
+            storage_commands::quick_notes_list,
+            storage_commands::quick_notes_create,
+            storage_commands::quick_notes_delete,
+            storage_commands::preferences_read,
+            storage_commands::preferences_write,
+            storage_commands::activity_append,
+            storage_commands::activity_report,
+            storage_commands::miniapps_list,
+            storage_commands::miniapps_create,
+            storage_commands::miniapps_update,
+            storage_commands::miniapps_delete,
             window_minimize,
             window_open_external,
             window_toggle_maximize,
             window_close,
             window_set_system_menu_enabled,
-            float_note_show,
-            float_note_toggle,
-            float_note_hide,
-            float_note_focus,
-            float_note_set_height,
-            float_note_open_route,
-            float_note_register_shortcut,
-            float_note_set_shortcut_enabled,
+            float_note::float_note_show,
+            float_note::float_note_toggle,
+            float_note::float_note_hide,
+            float_note::float_note_focus,
+            float_note::float_note_set_height,
+            float_note::float_note_open_route,
+            float_note::float_note_register_shortcut,
+            float_note::float_note_set_shortcut_enabled,
             system_apps_search,
             system_apps_open,
-            miniapp_view_show,
-            miniapp_view_set_bounds,
-            miniapp_view_hide,
-            miniapp_view_reload,
-            miniapp_view_close
+            miniapp::miniapp_view_show,
+            miniapp::miniapp_view_set_bounds,
+            miniapp::miniapp_view_hide,
+            miniapp::miniapp_view_reload,
+            miniapp::miniapp_view_close,
         ]);
 
     append_global_log("boot", "builder_configured", None);
@@ -4190,6 +2897,11 @@ pub fn run() {
     append_global_log("boot", "app_built", None);
 
     append_global_log("boot", "before_app_run", None);
-    app.run(|_app_handle, _event| {});
+    app.run(|app, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            app.state::<watchdog::WatchdogState>().stop();
+        }
+    });
     append_global_log("boot", "after_app_run", None);
+    diagnostics::flush();
 }

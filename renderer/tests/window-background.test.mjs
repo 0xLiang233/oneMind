@@ -28,7 +28,7 @@ test('shell keeps a solid base even with a stale Mica marker', async () => {
 })
 
 test('standalone floating note retains its intentional transparency', async () => {
-  const native = await read('../../desktop/tauri/src-tauri/src/lib.rs')
+  const native = await read('../../desktop/tauri/src-tauri/src/float_note.rs')
   const floatBuilder = native.slice(native.indexOf('fn ensure_float_note_window'))
   assert.match(floatBuilder.slice(0, floatBuilder.indexOf('.build()')), /\.transparent\(true\)/)
 })
